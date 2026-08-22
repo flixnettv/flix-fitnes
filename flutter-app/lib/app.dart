@@ -13,6 +13,8 @@ import 'screens/nutrition/nutrition_screen.dart';
 import 'screens/measurements/measurements_screen.dart';
 import 'screens/profile/profile_screen.dart';
 import 'screens/notifications/notifications_screen.dart';
+import 'screens/owner/owner_dashboard.dart';
+import 'screens/coach/coach_dashboard.dart';
 import 'models/exercise.dart';
 import 'providers/auth_provider.dart';
 
@@ -40,6 +42,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) => ScaffoldWithNav(child: child),
         routes: [
           GoRoute(path: '/home', builder: (_, __) => const HomeScreen()),
+          GoRoute(path: '/owner', builder: (_, __) => const OwnerDashboard()),
+          GoRoute(path: '/coach', builder: (_, __) => const CoachDashboard()),
           GoRoute(path: '/exercises', builder: (_, __) => const ExercisesScreen()),
           GoRoute(path: '/workouts', builder: (_, __) => const WorkoutsScreen()),
           GoRoute(path: '/nutrition', builder: (_, __) => const NutritionScreen()),
@@ -61,13 +65,14 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 });
 
-class ScaffoldWithNav extends StatelessWidget {
+class ScaffoldWithNav extends ConsumerWidget {
   final Widget child;
   const ScaffoldWithNav({super.key, required this.child});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final location = GoRouterState.of(context).uri.toString();
+    final role = ref.watch(authProvider).user?.role ?? 'client';
 
     int selectedIndex = 0;
     if (location.startsWith('/exercises')) selectedIndex = 1;
@@ -75,8 +80,27 @@ class ScaffoldWithNav extends StatelessWidget {
     if (location.startsWith('/nutrition')) selectedIndex = 3;
     if (location.startsWith('/measurements') ||
         location.startsWith('/profile') ||
-        location.startsWith('/notifications')) {
+        location.startsWith('/notifications') ||
+        location.startsWith('/owner') ||
+        location.startsWith('/coach')) {
       selectedIndex = 4;
+    }
+    if (location.startsWith('/owner') || location.startsWith('/coach')) selectedIndex = 0;
+
+    String firstLabel = 'home';
+    IconData firstIcon = Icons.home_outlined;
+    IconData firstSelectedIcon = Icons.home;
+    String firstRoute = '/home';
+    if (role == 'owner') {
+      firstLabel = 'dashboard';
+      firstIcon = Icons.dashboard_outlined;
+      firstSelectedIcon = Icons.dashboard;
+      firstRoute = '/owner';
+    } else if (role == 'coach') {
+      firstLabel = 'clients';
+      firstIcon = Icons.groups_outlined;
+      firstSelectedIcon = Icons.groups;
+      firstRoute = '/coach';
     }
 
     return Scaffold(
@@ -86,7 +110,7 @@ class ScaffoldWithNav extends StatelessWidget {
         onDestinationSelected: (i) {
           switch (i) {
             case 0:
-              context.go('/home');
+              context.go(firstRoute);
             case 1:
               context.go('/exercises');
             case 2:
@@ -97,12 +121,12 @@ class ScaffoldWithNav extends StatelessWidget {
               context.go('/profile');
           }
         },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'home'),
-          NavigationDestination(icon: Icon(Icons.fitness_center_outlined), selectedIcon: Icon(Icons.fitness_center), label: 'exercises'),
-          NavigationDestination(icon: Icon(Icons.timer_outlined), selectedIcon: Icon(Icons.timer), label: 'workouts'),
-          NavigationDestination(icon: Icon(Icons.restaurant_outlined), selectedIcon: Icon(Icons.restaurant), label: 'nutrition'),
-          NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: 'more'),
+        destinations: [
+          NavigationDestination(icon: Icon(firstIcon), selectedIcon: Icon(firstSelectedIcon), label: firstLabel),
+          const NavigationDestination(icon: Icon(Icons.fitness_center_outlined), selectedIcon: Icon(Icons.fitness_center), label: 'exercises'),
+          const NavigationDestination(icon: Icon(Icons.timer_outlined), selectedIcon: Icon(Icons.timer), label: 'workouts'),
+          const NavigationDestination(icon: Icon(Icons.restaurant_outlined), selectedIcon: Icon(Icons.restaurant), label: 'nutrition'),
+          const NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: 'more'),
         ],
       ),
     );
