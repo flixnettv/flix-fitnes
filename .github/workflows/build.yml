@@ -15,9 +15,10 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
           cache: true
-      - run: cd flutter-app && flutter pub get
+      - run: flutter --version
+      - run: cd flutter-app && flutter pub get -v 2>&1 | tail -20
       - run: cd flutter-app && flutter analyze --no-pub || echo "analyze warnings ignored"
-      - run: cd flutter-app && flutter build web --release
+      - run: cd flutter-app && flutter build web --release -v 2>&1 | tail -30
       - uses: actions/upload-artifact@v4
         with:
           name: flutter-web
@@ -36,8 +37,9 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
           cache: true
-      - run: cd flutter-app && flutter pub get
-      - run: cd flutter-app && flutter build apk --release
+      - run: flutter --version
+      - run: cd flutter-app && flutter pub get -v 2>&1 | tail -20
+      - run: cd flutter-app && flutter build apk --release -v 2>&1 | tail -30
       - uses: actions/upload-artifact@v4
         with:
           name: fitpro-apk
