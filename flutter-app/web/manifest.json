@@ -1,11 +1,11 @@
 {
-    "name": "fitpro_app",
-    "short_name": "fitpro_app",
+    "name": "FitPro Center",
+    "short_name": "FitPro",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0F172A",
+    "theme_color": "#38BDF8",
+    "description": "منصة إدارة الصالات الرياضية - تتبع التمارين والتغذية والقياسات",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
