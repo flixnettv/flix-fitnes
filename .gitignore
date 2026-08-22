@@ -1,0 +1,38 @@
+# Environment
+.env
+*.pyc
+__pycache__/
+venv/
+.venv/
+
+# Database
+*.sqlite3
+db.sqlite3
+
+# Static/Media
+staticfiles/
+media/
+
+# Flutter build
+flutter-app/build/
+flutter-app/.dart_tool/
+flutter-app/.packages
+flutter-app/pubspec.lock
+flutter-app/.metadata
+flutter-app/android/local.properties
+flutter-app/linux/flutter/ephemeral/
+flutter-app/macos/Pods/
+flutter-app/macos/Flutter/ephemeral/
+flutter-app/ios/Pods/
+flutter-app/ios/Flutter/ephemeral/
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
