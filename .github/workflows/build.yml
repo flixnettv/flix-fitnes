@@ -1,0 +1,71 @@
+name: Build FitPro
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: 'stable'
+          cache: true
+      - run: cd flutter-app && flutter pub get
+      - run: cd flutter-app && flutter analyze --no-pub
+      - run: cd flutter-app && flutter build web --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web
+          path: flutter-app/build/web
+
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: 'stable'
+          cache: true
+      - run: cd flutter-app && flutter pub get
+      - run: cd flutter-app && flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fitpro-apk
+          path: flutter-app/build/app/outputs/flutter-apk/app-release.apk
+
+  deploy-web:
+    needs: build-web
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: flutter-web
+          path: web-build
+      - name: Deploy to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          source: "web-build/*"
+          target: "/home/flix/fitpro-deploy/flutter-web"
+          strip_components: 1
+          rm: true
+      - name: Restart nginx
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          script: docker restart nginx-fitpro
