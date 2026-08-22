@@ -12,8 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.5'
-          channel: 'stable'
+          channel: stable
       - run: flutter --version
       - run: cd flutter-app && flutter pub get
       - run: cd flutter-app && flutter build web --release
@@ -28,8 +27,7 @@ jobs:
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.5'
-          channel: 'stable'
+          channel: stable
       - run: flutter --version
       - run: cd flutter-app && flutter pub get
       - run: cd flutter-app && flutter build apk --release
