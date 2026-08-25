@@ -23,7 +23,8 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'drf_spectacular',
-    # Local apps
+    # Local apps (original + additive)
+    'core',
     'acct',
     'exercise_db',
     'workout_tracking',
@@ -31,6 +32,8 @@ INSTALLED_APPS = [
     'body_measurements',
     'gym_center',
     'notif',
+    'devices',
+    'progress',
 ]
 
 MIDDLEWARE = [
@@ -127,3 +130,33 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
 }
+
+# === ADDITIVE: CACHES Redis (from fitpro) ===
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': os.environ.get('REDIS_URL', os.environ.get('CACHE_URL', 'redis://127.0.0.1:6379/1')),
+        'TIMEOUT': 300,
+        'KEY_PREFIX': 'fitpro',
+    }
+}
+# Fallback to locmem if redis not available in DEBUG without env
+if DEBUG and not os.environ.get('REDIS_URL'):
+    try:
+        import redis  # check installed
+    except ImportError:
+        CACHES['default'] = {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'fitpro-locmem',
+        }
+
+# === ADDITIVE: FitPro platform settings (from fitpro) ===
+FITPRO = {
+    'SUPPORTED_TIMEZONES': ['Asia/Riyadh', 'Asia/Dubai', 'Africa/Cairo', 'Europe/Istanbul', 'UTC'],
+    'SUPPORTED_LANGUAGES': [('ar', 'Arabic'), ('en', 'English')],
+    'SUPPORTED_CURRENCIES': ['SAR', 'AED', 'EGP', 'USD'],
+}
+PLATFORM_DOMAIN = os.environ.get('PLATFORM_DOMAIN', 'fitpro.hftv.qzz.io')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://fitpro.hftv.qzz.io')
+FITPRO_DYNAMIC_DIR = os.environ.get('FITPRO_DYNAMIC_DIR', '')
+

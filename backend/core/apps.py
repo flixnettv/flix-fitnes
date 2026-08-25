@@ -1,0 +1,11 @@
+from django.apps import AppConfig
+
+class CoreConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "core"
+    verbose_name = "FitPro Core"
+    def ready(self):
+        try:
+            import core.signals  # noqa
+        except ImportError:
+            pass

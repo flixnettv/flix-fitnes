@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'theme/app_theme.dart';
+import 'services/branding_service.dart';
+import 'theme/dynamic_theme.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
@@ -17,6 +19,9 @@ import 'screens/owner/owner_dashboard.dart';
 import 'screens/coach/coach_dashboard.dart';
 import 'models/exercise.dart';
 import 'providers/auth_provider.dart';
+
+/// Gym branding — fetched once at startup, cached offline.
+final brandingProvider = FutureProvider<GymBranding>((ref) => BrandingService.load());
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 final _shellNavigatorKey = GlobalKey<NavigatorState>();
@@ -80,24 +85,21 @@ class ScaffoldWithNav extends ConsumerWidget {
     if (location.startsWith('/nutrition')) selectedIndex = 3;
     if (location.startsWith('/measurements') ||
         location.startsWith('/profile') ||
-        location.startsWith('/notifications') ||
-        location.startsWith('/owner') ||
-        location.startsWith('/coach')) {
+        location.startsWith('/notifications')) {
       selectedIndex = 4;
     }
-    if (location.startsWith('/owner') || location.startsWith('/coach')) selectedIndex = 0;
 
-    String firstLabel = 'home';
+    String firstLabel = 'الرئيسية';
     IconData firstIcon = Icons.home_outlined;
     IconData firstSelectedIcon = Icons.home;
     String firstRoute = '/home';
     if (role == 'owner') {
-      firstLabel = 'dashboard';
+      firstLabel = 'لوحتي';
       firstIcon = Icons.dashboard_outlined;
       firstSelectedIcon = Icons.dashboard;
       firstRoute = '/owner';
-    } else if (role == 'coach') {
-      firstLabel = 'clients';
+    } else if (role == 'coach' || role == 'trainer') {
+      firstLabel = 'عملائي';
       firstIcon = Icons.groups_outlined;
       firstSelectedIcon = Icons.groups;
       firstRoute = '/coach';
@@ -123,10 +125,10 @@ class ScaffoldWithNav extends ConsumerWidget {
         },
         destinations: [
           NavigationDestination(icon: Icon(firstIcon), selectedIcon: Icon(firstSelectedIcon), label: firstLabel),
-          const NavigationDestination(icon: Icon(Icons.fitness_center_outlined), selectedIcon: Icon(Icons.fitness_center), label: 'exercises'),
-          const NavigationDestination(icon: Icon(Icons.timer_outlined), selectedIcon: Icon(Icons.timer), label: 'workouts'),
-          const NavigationDestination(icon: Icon(Icons.restaurant_outlined), selectedIcon: Icon(Icons.restaurant), label: 'nutrition'),
-          const NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: 'more'),
+          const NavigationDestination(icon: Icon(Icons.fitness_center_outlined), selectedIcon: Icon(Icons.fitness_center), label: 'التمارين'),
+          const NavigationDestination(icon: Icon(Icons.timer_outlined), selectedIcon: Icon(Icons.timer), label: 'الجلسات'),
+          const NavigationDestination(icon: Icon(Icons.restaurant_outlined), selectedIcon: Icon(Icons.restaurant), label: 'التغذية'),
+          const NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: 'حسابي'),
         ],
       ),
     );
@@ -138,13 +140,40 @@ class App extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final brandingAsync = ref.watch(brandingProvider);
+
+    return brandingAsync.when(
+      loading: () => MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(
+          backgroundColor: const Color(0xFF0F172A),
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.fitness_center, size: 72, color: Colors.cyanAccent.withOpacity(.9)),
+                const SizedBox(height: 24),
+                const CircularProgressIndicator(color: Colors.cyanAccent),
+              ],
+            ),
+          ),
+        ),
+      ),
+      error: (_, __) => _material(ref, GymBranding.fallback),
+      data: (b) => _material(ref, b),
+    );
+  }
+
+  Widget _material(WidgetRef ref, GymBranding b) {
     final router = ref.watch(routerProvider);
+    SystemChrome.setSystemUIOverlayStyle(DynamicTheme.overlay());
     return MaterialApp.router(
-      title: 'FitPro Center',
-      theme: AppTheme.darkTheme,
+      title: b.name,
+      theme: DynamicTheme.build(b),
       routerConfig: router,
       debugShowCheckedModeBanner: false,
-      locale: const Locale('en'),
+      locale: const Locale('ar'),
+      builder: (context, child) => Directionality(textDirection: TextDirection.rtl, child: child!),
     );
   }
 }

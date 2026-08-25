@@ -1,5 +1,6 @@
 from django.db import models
 
+# === ORIGINAL MODELS PRESERVED ===
 
 class ClientPlan(models.Model):
     client = models.ForeignKey('acct.User', on_delete=models.CASCADE, related_name='client_plans', verbose_name='العميل')
@@ -10,6 +11,16 @@ class ClientPlan(models.Model):
     is_active = models.BooleanField('نشط', default=True)
     notes = models.TextField('ملاحظات', blank=True)
     created_at = models.DateTimeField('تاريخ الإنشاء', auto_now_add=True)
+    # === ADDITIVE: tenant & sync fields from fitpro.workout.WorkoutPlan ===
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True, verbose_name='الصالة')
+    tenant_id = models.UUIDField(null=True, blank=True, editable=False, db_index=True)
+    days_sync = models.JSONField('مزامنة الأيام', default=dict, blank=True, help_text='Per-client days sync: {"day_id": "synced"}')
+    # client FK already exists (client field above) - keep compatibility
+    # additional per-client assignment fields mirroring source
+    assigned_client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_workout_plans_via_tracking', verbose_name='العميل (بروفايل)')
+    is_template = models.BooleanField('قالب', default=False)
+    level = models.CharField('المستوى', max_length=20, default='beginner', blank=True)
+    goal = models.CharField('الهدف', max_length=20, default='general', blank=True)
 
     class Meta:
         verbose_name = 'خطة العميل'
@@ -30,6 +41,14 @@ class WorkoutSession(models.Model):
     notes = models.TextField('ملاحظات', blank=True)
     rating = models.PositiveIntegerField('التقييم', blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # === ADDITIVE ===
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True)
+    client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='workout_sessions_profile')
+    started_at = models.DateTimeField('بدأت في', null=True, blank=True)
+    completed_at = models.DateTimeField('اكتملت في', null=True, blank=True)
+    duration_minutes = models.PositiveIntegerField('المدة (دقيقة)', null=True, blank=True)
+    status = models.CharField('الحالة', max_length=20, choices=[('in_progress','قيد التنفيذ'),('completed','مكتمل'),('skipped','متخطى')], default='in_progress', blank=True)
+    trainer_feedback = models.TextField('ملاحظات المدرب', blank=True)
 
     class Meta:
         verbose_name = 'جلسة تدريب'
@@ -50,6 +69,9 @@ class WorkoutLog(models.Model):
     rir = models.PositiveIntegerField('RIR', blank=True, null=True)
     notes = models.TextField('ملاحظات', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # === ADDITIVE from fitpro.workout.WorkoutLog ===
+    client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='workout_logs_via_tracking')
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True)
 
     class Meta:
         verbose_name = 'سجل تمرين'
@@ -58,3 +80,44 @@ class WorkoutLog(models.Model):
 
     def __str__(self):
         return f'{self.exercise.name_ar or self.exercise.name} - {self.sets_completed}×{self.reps_completed}'
+
+
+# === ADDITIVE MODELS from fitpro.workout (Exercise, WorkoutPlan helpers) mirrored as tenant-aware ===
+
+class TenantExercise(models.Model):
+    """Mirrored from fitpro.workout.Exercise for tenant isolation - additive, not replacing exercise_db.Exercise"""
+    id = models.UUIDField(primary_key=True, default=__import__('uuid').uuid4, editable=False)
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True, related_name='tenant_exercises')
+    name = models.CharField('الاسم', max_length=200)
+    name_ar = models.CharField('الاسم عربي', max_length=200, blank=True)
+    description = models.TextField('الوصف', blank=True)
+    muscle_group = models.CharField('المجموعة العضلية', max_length=20, default='chest', blank=True)
+    equipment = models.CharField('المعدات', max_length=20, default='bodyweight', blank=True)
+    difficulty = models.CharField('الصعوبة', max_length=20, default='beginner', blank=True)
+    video_url = models.URLField(blank=True)
+    is_custom = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        verbose_name = 'تمرين مستأجر'
+        verbose_name_plural = 'تمارين مستأجرة'
+        ordering = ['name']
+    def __str__(self):
+        return self.name_ar or self.name
+
+class ClientWorkoutDaySync(models.Model):
+    """Per-client days sync - additive helper for per-client days"""
+    id = models.UUIDField(primary_key=True, default=__import__('uuid').uuid4, editable=False)
+    client = models.ForeignKey('acct.User', on_delete=models.CASCADE, related_name='workout_day_syncs')
+    client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.CASCADE, null=True, blank=True, related_name='day_syncs')
+    plan = models.ForeignKey('exercise_db.WorkoutPlan', on_delete=models.CASCADE, null=True, blank=True)
+    day = models.ForeignKey('exercise_db.WorkoutDay', on_delete=models.CASCADE)
+    is_completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        verbose_name = 'مزامنة يوم العميل'
+        verbose_name_plural = 'مزامنة أيام العملاء'
+        unique_together = [('client', 'day')]
+    def __str__(self):
+        return f"{self.client} - {self.day} - {'done' if self.is_completed else 'pending'}"

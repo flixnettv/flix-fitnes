@@ -14,6 +14,11 @@ urlpatterns = [
     path('api/measurements/', include('body_measurements.urls')),
     path('api/gym/', include('gym_center.urls')),
     path('api/notifications/', include('notif.urls')),
+    # === ADDITIVE: core branding & directory ===
+    path('api/', include('core.urls')),
+    # === ADDITIVE: devices & progress ===
+    path('api/devices/', include('devices.urls')),
+    path('api/progress/', include('progress.urls')),
     # API docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),

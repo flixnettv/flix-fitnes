@@ -1,5 +1,6 @@
 from django.db import models
 
+# === ORIGINAL MODELS PRESERVED ===
 
 class BodyMeasurement(models.Model):
     SOURCE_CHOICES = [
@@ -21,6 +22,12 @@ class BodyMeasurement(models.Model):
     notes = models.TextField('ملاحظات', blank=True)
     source = models.CharField('المصدر', max_length=20, choices=SOURCE_CHOICES, default='manual')
     created_at = models.DateTimeField(auto_now_add=True)
+    # === ADDITIVE from fitpro.measurements.Measurement ===
+    height_cm = models.PositiveIntegerField('الطول (سم) - additive', blank=True, null=True)
+    measurement_date = models.DateField('تاريخ القياس - additive', blank=True, null=True)
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True, verbose_name='الصالة')
+    client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.SET_NULL, null=True, blank=True, related_name='body_measurements_profile')
+    tenant_id = models.UUIDField(null=True, blank=True, editable=False, db_index=True)
 
     class Meta:
         verbose_name = 'قياس جسم'
@@ -42,6 +49,12 @@ class ProgressPhoto(models.Model):
     weight_at_time = models.DecimalField('الوزن وقتها (كجم)', max_digits=5, decimal_places=2, blank=True, null=True)
     notes = models.TextField('ملاحظات', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # additive from fitpro.progress.ProgressPhoto
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True)
+    client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.CASCADE, null=True, blank=True, related_name='progress_photos_body')
+    photo_field = models.ImageField('صورة تقدم - additive', upload_to='progress/%Y/%m/', blank=True, null=True)
+    body_fat_percent = models.DecimalField('نسبة الدهون - additive', max_digits=4, decimal_places=1, null=True, blank=True)
+    is_private = models.BooleanField('خاص', default=False)
 
     class Meta:
         verbose_name = 'صورة تقدم'
@@ -65,6 +78,14 @@ class Device(models.Model):
     oauth_data = models.JSONField('بيانات OAuth', blank=True, null=True)
     last_sync = models.DateTimeField('آخر مزامنة', blank=True, null=True)
     created_at = models.DateTimeField('تاريخ الإنشاء', auto_now_add=True)
+    # additive from fitpro.devices.Device
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True)
+    client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.CASCADE, null=True, blank=True, related_name='devices_body')
+    kind = models.CharField('النوع - additive', max_length=10, default='scale', blank=True)
+    status = models.CharField('الحالة', max_length=10, default='active', blank=True)
+    pairing_code = models.CharField('كود الاقتران', max_length=6, blank=True, null=True)
+    code_expires_at = models.DateTimeField(null=True, blank=True)
+    ingest_token = models.CharField('رمز الإدخال', max_length=64, blank=True, null=True)
 
     class Meta:
         verbose_name = 'جهاز'
@@ -88,6 +109,11 @@ class DeviceMeasurement(models.Model):
     measured_at = models.DateTimeField('وقت القياس')
     raw_data = models.JSONField('البيانات الأولية', blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # additive from fitpro.devices.DeviceReading
+    gym_id = models.UUIDField(null=True, blank=True, editable=False, db_index=True)
+    client_id = models.UUIDField(null=True, blank=True, editable=False, db_index=True)
+    metric = models.CharField('المقياس - additive', max_length=20, blank=True, null=True)
+    recorded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'قياس جهاز'
@@ -96,3 +122,44 @@ class DeviceMeasurement(models.Model):
 
     def __str__(self):
         return f'{self.user.get_full_name()} - {self.measurement_type}: {self.value} {self.unit}'
+
+# === ADDITIVE: TenantMeasurement from fitpro.measurements ===
+class TenantMeasurement(models.Model):
+    id = models.UUIDField(primary_key=True, default=__import__('uuid').uuid4, editable=False)
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True)
+    client = models.ForeignKey('acct.User', on_delete=models.CASCADE, related_name='tenant_measurements')
+    client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.CASCADE, null=True, blank=True, related_name='tenant_measurements_profile')
+    weight_kg = models.DecimalField(max_digits=5, decimal_places=2)
+    height_cm = models.PositiveIntegerField()
+    body_fat_percent = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    muscle_mass_kg = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    measurement_date = models.DateField()
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    tenant_id = models.UUIDField(null=True, blank=True, editable=False, db_index=True)
+    class Meta:
+        ordering = ['-measurement_date']
+    def __str__(self):
+        return f"{self.client} - {self.weight_kg}kg"
+
+# === ADDITIVE: Goal & WeeklyCheckin mirrors for body side (optional) ===
+class GoalMirror(models.Model):
+    id = models.UUIDField(primary_key=True, default=__import__('uuid').uuid4, editable=False)
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True)
+    client = models.ForeignKey('acct.User', on_delete=models.CASCADE, null=True, blank=True)
+    client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.CASCADE, null=True, blank=True, related_name='goal_mirrors')
+    title = models.CharField(max_length=200)
+    target_value = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
+    current_value = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    def __str__(self):
+        return self.title
+
+class WeeklyCheckinMirror(models.Model):
+    id = models.UUIDField(primary_key=True, default=__import__('uuid').uuid4, editable=False)
+    gym = models.ForeignKey('gym_center.GymCenter', on_delete=models.CASCADE, null=True, blank=True)
+    client_profile = models.ForeignKey('acct.ClientProfile', on_delete=models.CASCADE, null=True, blank=True)
+    week_start = models.DateField(null=True, blank=True)
+    weight_kg = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
