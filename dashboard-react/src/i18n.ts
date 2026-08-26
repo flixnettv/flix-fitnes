@@ -253,6 +253,7 @@ const en: typeof ar = {
   "role.clientUser": "Mohammed A.",
 
   "nav.overview": "Overview",
+  "nav.accounts": "Accounts",
   "nav.gyms": "Gyms",
   "nav.system": "System Health",
   "nav.trainers": "Trainers",

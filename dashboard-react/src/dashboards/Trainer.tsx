@@ -1,21 +1,59 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  CHECKINS, CLIENTS, EXERCISES, FOODS, GOALS, MEAL_TEMPLATE, MUSCLES,
+  CHECKINS, CLIENTS, EXERCISES, FOODS, GOALS, MEAL_TEMPLATE, MEMBERSHIP_LABEL, MUSCLES,
   PlanDay, PlanExercise, TRAINERS, WEIGHT_SERIES, WORKOUT_TEMPLATE, Meal,
 } from "../data";
 import { useApp } from "../store";
+import { createMember, createPlan, assignPlan, syncRealData, syncExercises,
+  fetchClientWorkoutPlan, updateWorkoutPlan, fetchClientMealPlan, updateMealPlan,
+  type PlanDayPayload } from "../lib/api";
 import { AreaChart, Avatar, Badge, Icon, Meter, Reveal, Ring, SectionTitle, Sparkline } from "../components/ui";
 
 /* ---------------- clients tab ---------------- */
-function ClientsTab() {
+function ClientsTab({ selectedId: sel, onSelect: setSel }: { selectedId: string; onSelect: (id: string) => void }) {
   const { toast } = useApp();
   const trainer = TRAINERS[0];
   const myClients = CLIENTS.filter((c) => c.trainerId === trainer.id);
-  const [sel, setSel] = useState(myClients[0].id);
-  const client = myClients.find((c) => c.id === sel)!;
+  const [newOpen, setNewOpen] = useState(false);
+  const [nf, setNf] = useState({ name: "", email: "", phone: "", membership: "basic", goals: "", password: "" });
+  const [busy, setBusy] = useState(false);
+  const effSel = sel && myClients.some((x) => x.id === sel) ? sel : myClients[0]?.id;
+  const EMPTY_CLIENT = { id: "", name: "", gymId: "g1", trainerId: "", membership: "basic" as const, membershipEnd: "", goals: [], weight: 0, startWeight: 0, targetWeight: 0, adherence: 0, lastWorkout: "", streak: 0, joinedWeeks: 0 };
+  const client = myClients.find((c) => c.id === effSel) ?? myClients[0] ?? EMPTY_CLIENT;
+
+  const submitNewClient = async () => {
+    if (!nf.email.trim() || !nf.name.trim()) { toast("الاسم والبريد مطلوبان", "ember"); return; }
+    setBusy(true);
+    try {
+      await createMember({
+        email: nf.email.trim(),
+        name: nf.name.trim(),
+        phone: nf.phone.trim() || undefined,
+        password: nf.password || undefined,
+        membership_type: nf.membership,
+        goals: nf.goals ? nf.goals.split("،").map((g) => g.trim()).filter(Boolean) : [],
+      });
+      await syncRealData();
+      setNewOpen(false);
+      setNf({ name: "", email: "", phone: "", membership: "basic", goals: "", password: "" });
+      toast("تم إنشاء المتدرب وربطه بحسابك ✓", "mint");
+    } catch (e) {
+      toast(e instanceof Error && e.message.includes("403") ? "غير مسموح" : "تعذّر الإنشاء — تحقق من البيانات", "ember");
+    } finally { setBusy(false); }
+  };
 
   return (
     <div className="grid lg:grid-cols-[1fr_1.35fr] gap-5">
+        {!myClients.length && (
+          <div className="lg:col-span-2 glass rounded-2xl p-5 text-center anim-fade-up">
+            <div className="text-sm font-bold text-snow">{"\u0644\u0627 \u064a\u0648\u062c\u062f \u0645\u062a\u062f\u0631\u0628\u0648\u0646 \u0628\u0639\u062f"}</div>
+            <p className="text-[11px] text-moss mt-1">{"\u0623\u0636\u0641 \u0623\u0648\u0644 \u0645\u062a\u062f\u0631\u0628 \u0644\u062a\u0628\u062f\u0623 \u0628\u0646\u0627\u0621 \u0627\u0644\u062e\u0637\u0637 \u0648\u0627\u0644\u0645\u062a\u0627\u0628\u0639\u0629"}</p>
+            <button onClick={() => setNewOpen(true)} className="btn-brand rounded-xl px-4 py-2 text-[11px] font-bold mt-3 inline-flex items-center gap-1.5">
+              <Icon name="userPlus" className="w-4 h-4" /> {"\u0645\u062a\u062f\u0631\u0628 \u062c\u062f\u064a\u062f"}
+            </button>
+          </div>
+        )}
+
       <div className="grid gap-4 content-start">
         <Reveal>
           <div className="panel p-4 flex items-center justify-between">
@@ -23,13 +61,13 @@ function ClientsTab() {
               <div className="font-display font-bold text-sm text-snow">{trainer.name}</div>
               <div className="text-[10px] text-moss mt-0.5">{myClients.length} من {trainer.maxClients} سعة · تخصص: {trainer.spec.join(" + ")}</div>
             </div>
-            <button onClick={() => toast("فُتح نموذج تسجيل متدرب جديد — يُربط حساب المتدرب بملفك تلقائياً", "mint")} className="btn-brand rounded-xl px-3.5 py-2 text-[11px] font-bold flex items-center gap-1.5">
+            <button onClick={() => setNewOpen(true)} className="btn-brand rounded-xl px-3.5 py-2 text-[11px] font-bold flex items-center gap-1.5">
               <Icon name="userPlus" className="w-4 h-4" /> متدرب جديد
             </button>
           </div>
         </Reveal>
         {myClients.map((c, i) => {
-          const on = c.id === sel;
+          const on = c.id === (sel || myClients[0]?.id);
           return (
             <Reveal key={c.id} delay={i * 70}>
               <button
@@ -141,6 +179,44 @@ function ClientsTab() {
           </div>
         </div>
       </Reveal>
+
+      <NewClientModal open={newOpen} onClose={() => setNewOpen(false)}>
+        <div className="p-6">
+          <SectionTitle icon="userPlus" title="تسجيل متدرب جديد" sub="سيُنشأ حساب ويُربط بك تلقائياً" />
+          <div className="grid gap-2.5 mt-4">
+            <input value={nf.name} onChange={(e) => setNf((f) => ({ ...f, name: e.target.value }))} placeholder="الاسم الكامل *" className="chip rounded-xl px-4 py-3 text-xs text-snow outline-none focus:border-[var(--brand-line)] bg-transparent" />
+            <input dir="ltr" value={nf.email} onChange={(e) => setNf((f) => ({ ...f, email: e.target.value }))} placeholder="email@domain.com *" className="chip rounded-xl px-4 py-3 text-xs text-snow outline-none focus:border-[var(--brand-line)] bg-transparent" />
+            <input dir="ltr" value={nf.phone} onChange={(e) => setNf((f) => ({ ...f, phone: e.target.value }))} placeholder="رقم الجوال (اختياري)" className="chip rounded-xl px-4 py-3 text-xs text-snow outline-none focus:border-[var(--brand-line)] bg-transparent" />
+            <div className="grid grid-cols-2 gap-2.5">
+              <select value={nf.membership} onChange={(e) => setNf((f) => ({ ...f, membership: e.target.value }))} className="chip rounded-xl px-3 py-3 text-xs text-snow outline-none bg-transparent">
+                <option value="basic">أساسية</option>
+                <option value="premium">بريميوم</option>
+                <option value="vip">VIP</option>
+                <option value="trial">تجريبية</option>
+              </select>
+              <input value={nf.goals} onChange={(e) => setNf((f) => ({ ...f, goals: e.target.value }))} placeholder="أهداف بفاصلة عربية" className="chip rounded-xl px-4 py-3 text-xs text-snow outline-none focus:border-[var(--brand-line)] bg-transparent" />
+            </div>
+            <div className="text-[10px] text-moss2">كلمة المرور الافتراضية: <b className="text-snow" dir="ltr">Client2026!</b></div>
+            <div className="flex gap-2.5 mt-1">
+              <button disabled={busy} onClick={submitNewClient} className="btn-brand flex-1 rounded-xl py-3 text-xs font-display font-bold disabled:opacity-60">
+                {busy ? "جاري الإنشاء…" : "إنشاء الحساب"}
+              </button>
+              <button onClick={() => setNewOpen(false)} className="btn-ghost rounded-xl px-5 py-3 text-xs font-bold text-moss">إلغاء</button>
+            </div>
+          </div>
+        </div>
+      </NewClientModal>
+    </div>
+  );
+}
+
+/* ---------------- new-client modal ---------------- */
+function NewClientModal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative glass-deep rounded-3xl border border-[var(--glass-border)] w-full max-w-md anim-fade-up">{children}</div>
     </div>
   );
 }
@@ -151,12 +227,78 @@ const parseReps = (r: string) => {
   return isNaN(n) ? 10 : n;
 };
 
-function WorkoutBuilder() {
+function WorkoutBuilder({ clientId, onClientChange }: { clientId: string; onClientChange: (id: string) => void }) {
   const { toast } = useApp();
+  const [planId, setPlanId] = useState<string | null>(null);
+  const [loadingPlan, setLoadingPlan] = useState(false);
+  const client = CLIENTS.find((x) => x.id === clientId);
+
+  /* load this client's existing plan */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!clientId) return;
+      setLoadingPlan(true);
+      try {
+        const existing = await fetchClientWorkoutPlan(clientId);
+        if (!alive) return;
+        if (existing && existing.days?.length) {
+          setPlanId(existing.id);
+          setDays(existing.days.map((d) => ({
+            name: d.name,
+            focus: "",
+            exercises: (d.exercises || []).map((e) => ({
+              exId: e.exercise, sets: e.sets, reps: String(e.reps), rest: e.rest_seconds,
+            })),
+          })));
+          toast("تم تحميل خطة المتدرب الحالية للتعديل", "brand");
+        } else {
+          setPlanId(null);
+          setDays(WORKOUT_TEMPLATE.days.map((d) => ({ ...d, exercises: d.exercises.map((e) => ({ ...e })) })));
+        }
+      } finally { if (alive) setLoadingPlan(false); }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  const saveClientPlan = async () => {
+    if (!clientId) { toast("اختر متدرباً أولاً", "ember"); return; }
+    const payload = {
+      client_id: clientId,
+      name: `خطة ${CLIENTS.find((x) => x.id === clientId)?.name ?? ""}`,
+      level: WORKOUT_TEMPLATE.level === "مبتدئ" ? "beginner" : WORKOUT_TEMPLATE.level === "متوسط" ? "intermediate" : "advanced",
+      goal: WORKOUT_TEMPLATE.goal === "تخسيس" ? "weight_loss" : WORKOUT_TEMPLATE.goal === "تضخيم" ? "muscle_gain" : WORKOUT_TEMPLATE.goal === "قوة" ? "strength" : "general",
+      duration_weeks: WORKOUT_TEMPLATE.weeks,
+      days: days.map((d, i) => ({
+        day_number: i + 1,
+        name: d.name || `اليوم ${i + 1}`,
+        exercises: d.exercises.filter((e) => e.exId && e.exId.length > 20).map((e) => ({ exercise: e.exId, sets: e.sets, reps: e.reps, rest_seconds: e.rest })),
+      })) as PlanDayPayload[],
+    };
+    setAssignBusy(true);
+    try {
+      if (planId) {
+        await updateWorkoutPlan(planId, payload);
+        toast("حُدّثت خطة المتدرب وحفظت ✓", "mint");
+      } else {
+        const created = await createPlan(payload as never);
+        setPlanId(created.id);
+        toast(`أُنشئت خطة خاصة بالمتدرب ونُشرت له ✓`, "mint");
+      }
+    } catch (e) {
+      console.warn(e);
+      toast("تعذّر الحفظ — تأكد من إضافة تمارين صالحة", "ember");
+    } finally { setAssignBusy(false); }
+  };
   const [days, setDays] = useState<PlanDay[]>(() => WORKOUT_TEMPLATE.days.map((d) => ({ ...d, exercises: d.exercises.map((e) => ({ ...e })) })));
   const [activeDay, setActiveDay] = useState(0);
   const [muscle, setMuscle] = useState<string>("الكل");
   const [q, setQ] = useState("");
+  const [assignBusy, setAssignBusy] = useState(false);
+
+  useEffect(() => { syncExercises(); }, []);
+
 
   const library = useMemo(
     () => EXERCISES.filter((e) => (muscle === "الكل" || e.muscle === muscle) && (e.nameAr.includes(q) || e.nameEn.toLowerCase().includes(q.toLowerCase()))),
@@ -168,7 +310,7 @@ function WorkoutBuilder() {
   const estMin = Math.round(day.exercises.reduce((s, e) => s + e.sets * (parseReps(e.reps) * 0.06 + e.rest / 60), 0));
 
   const addExercise = (exId: string) => {
-    const ex = EXERCISES.find((e) => e.id === exId)!;
+    const ex = EXERCISES.find((e) => e.id === exId) ?? { nameAr: exId.slice(0, 8), nameEn: "", muscle: "", difficulty: "مبتدئ" as const };
     setDays((ds) => ds.map((d, i) => (i === activeDay ? { ...d, exercises: [...d.exercises, { exId, sets: ex.defaultSets, reps: ex.defaultReps, rest: 90 }] } : d)));
     toast(`أُضيف «${ex.nameAr}» إلى ${day.name}`, "mint");
   };
@@ -221,12 +363,26 @@ function WorkoutBuilder() {
       <Reveal delay={100}>
         <div className="panel p-5">
           <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-            <div>
-              <div className="font-display font-bold text-snow">{WORKOUT_TEMPLATE.name}</div>
-              <div className="text-[10px] text-moss mt-0.5">{WORKOUT_TEMPLATE.weeks} أسابيع · {WORKOUT_TEMPLATE.level} · هدف: {WORKOUT_TEMPLATE.goal} · قالب قابل لإعادة الاستخدام</div>
+            <div className="flex items-center gap-3 flex-wrap min-w-0">
+              <select
+                value={clientId}
+                onChange={(e) => onClientChange(e.target.value)}
+                className="chip rounded-xl px-3 py-2.5 text-xs font-bold text-snow outline-none focus:border-[var(--brand-line)] bg-transparent"
+              >
+                {CLIENTS.map((cl) => (
+                  <option key={cl.id} value={cl.id} className="bg-[#121a13]">{cl.name} — {MEMBERSHIP_LABEL[cl.membership]}</option>
+                ))}
+              </select>
+              <div className="min-w-0">
+                <div className="font-display font-bold text-snow text-sm truncate">
+                  {planId ? `تعديل خطة ${client?.name}` : `خطة جديدة لـ${client?.name}`}
+                  {loadingPlan && <span className="text-moss"> · تحميل…</span>}
+                </div>
+                <div className="text-[10px] text-moss mt-0.5">{WORKOUT_TEMPLATE.weeks} أسابيع · {WORKOUT_TEMPLATE.level} · هدف: {WORKOUT_TEMPLATE.goal} — خاصة بهذا المتدرب وحده</div>
+              </div>
             </div>
-            <button onClick={() => toast("أُسندت الخطة إلى 3 متدربين مع إشعار فوري", "brand")} className="btn-brand rounded-xl px-4 py-2 text-[11px] font-bold flex items-center gap-2">
-              <Icon name="check" className="w-4 h-4" /> إسناد لمتدرب
+            <button disabled={assignBusy || loadingPlan || !clientId} onClick={saveClientPlan} className="btn-brand rounded-xl px-4 py-2 text-[11px] font-bold flex items-center gap-2 disabled:opacity-60">
+              <Icon name="check" className="w-4 h-4" /> {assignBusy ? "جاري الحفظ…" : planId ? "حفظ التعديلات" : "حفظ وإسناد"}
             </button>
           </div>
 
@@ -250,7 +406,7 @@ function WorkoutBuilder() {
 
           <div className="space-y-2.5">
             {day.exercises.map((ex, idx) => {
-              const info = EXERCISES.find((e) => e.id === ex.exId)!;
+              const info = EXERCISES.find((e) => e.id === ex.exId) ?? { nameAr: "تمرين", nameEn: "", muscle: "—", difficulty: "مبتدئ" as const, equipment: "" };
               return (
                 <div key={`${ex.exId}-${idx}`} className="panel p-3.5 flex items-center gap-3 anim-fade-up" style={{ animationDelay: `${idx * 40}ms` }}>
                   <span className="font-display font-bold text-moss2 w-5 text-center">{idx + 1}</span>
@@ -290,21 +446,96 @@ function WorkoutBuilder() {
           </div>
         </div>
       </Reveal>
-    </div>
+
+</div>
   );
 }
 
 /* ---------------- nutrition builder ---------------- */
-function NutritionBuilder() {
+function NutritionBuilder({ clientId, onClientChange }: { clientId: string; onClientChange: (id: string) => void }) {
   const { toast } = useApp();
   const [meals, setMeals] = useState<Meal[]>(() => MEAL_TEMPLATE.meals.map((m) => ({ ...m, items: m.items.map((i) => ({ ...i })) })));
   const [mealIdx, setMealIdx] = useState(0);
   const [foodQ, setFoodQ] = useState("");
+  const [planId, setPlanId] = useState<string | null>(null);
+  const [busyN, setBusyN] = useState(false);
+  const client = CLIENTS.find((x) => x.id === clientId);
+
+  /* load this client's meal plan */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!clientId) return;
+      try {
+        const existing = await fetchClientMealPlan(clientId);
+        if (!alive) return;
+        if (existing && existing.meals?.length) {
+          setPlanId(existing.id);
+          setMeals(existing.meals.map((m) => ({
+            name: m.name,
+            time: "",
+            items: (m.foods || []).map((f) => ({ foodId: f.food, grams: f.quantity_g })),
+          })));
+          toast("تم تحميل خطة التغذية الحالية للتعديل", "brand");
+        } else {
+          setPlanId(null);
+          setMeals(MEAL_TEMPLATE.meals.map((m) => ({ ...m, items: m.items.map((i) => ({ ...i })) })));
+        }
+      } catch { /* noop */ }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  const saveMealPlan = async () => {
+    if (!clientId) { toast("اختر متدرباً أولاً", "ember"); return; }
+    setBusyN(true);
+    try {
+      const mealPayloads = meals.map((m, i) => {
+        let cal = 0, pr = 0, cb = 0, ft = 0;
+        m.items.forEach((it) => {
+          const f = FOODS.find((x) => x.id === it.foodId);
+          if (!f) return;
+          const k = it.grams / 100;
+          cal += f.cal * k; pr += f.protein * k; cb += f.carbs * k; ft += f.fat * k;
+        });
+        return {
+          name: m.name || `وجبة ${i + 1}`,
+          order: i + 1,
+          calories: Math.round(cal),
+          protein_g: Math.round(pr), carbs_g: Math.round(cb), fat_g: Math.round(ft),
+          foods: m.items.filter((it) => it.foodId && it.foodId.length > 20)
+            .map((it) => ({ food: it.foodId, quantity_g: it.grams })),
+        };
+      });
+      const payload = {
+        client_id: clientId,
+        name: `تغذية ${client?.name ?? ""}`,
+        goal: "maintenance",
+        daily_calories: totals.cal,
+        protein_target_g: totals.protein,
+        carbs_target_g: totals.carbs,
+        fat_target_g: totals.fat,
+        meals: mealPayloads,
+      };
+      if (planId) {
+        await updateMealPlan(planId, payload);
+        toast("حُدّثت خطة التغذية وحفظت ✓", "mint");
+      } else {
+        const created = await createMealPlan(payload as never);
+        setPlanId(created.id);
+        toast("أُنشئت خطة تغذية خاصة بالمتدرب ✓", "mint");
+      }
+    } catch (e) {
+      console.warn(e);
+      toast("تعذّر حفظ خطة التغذية", "ember");
+    } finally { setBusyN(false); }
+  };
 
   const totals = useMemo(() => {
     let cal = 0, protein = 0, carbs = 0, fat = 0;
     meals.forEach((m) => m.items.forEach((it) => {
-      const f = FOODS.find((x) => x.id === it.foodId)!;
+      const f = FOODS.find((x) => x.id === it.foodId) ?? { cal: 0, protein: 0, carbs: 0, fat: 0, nameAr: "" };
       const k = it.grams / 100;
       cal += f.cal * k; protein += f.protein * k; carbs += f.carbs * k; fat += f.fat * k;
     }));
@@ -316,7 +547,7 @@ function NutritionBuilder() {
   const meal = meals[mealIdx];
 
   const addItem = (foodId: string) => {
-    const f = FOODS.find((x) => x.id === foodId)!;
+    const f = FOODS.find((x) => x.id === foodId) ?? { cal: 0, protein: 0, carbs: 0, fat: 0, nameAr: "" };
     setMeals((ms) => ms.map((m, i) => (i === mealIdx ? { ...m, items: [...m.items, { foodId, grams: 100 }] } : m)));
     toast(`أُضيف «${f.nameAr}» إلى ${meal.name}`, "mint");
   };
@@ -340,14 +571,27 @@ function NutritionBuilder() {
       <Reveal>
         <div className="panel p-5">
           <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-            <div>
-              <div className="font-display font-bold text-snow">{MEAL_TEMPLATE.name}</div>
-              <div className="text-[10px] text-moss mt-0.5">هدف: {MEAL_TEMPLATE.goal} · {MEAL_TEMPLATE.meals.length} وجبات يومياً · قالب قابل للتخصيص لكل متدرب</div>
+            <div className="flex items-center gap-3 flex-wrap min-w-0">
+              <select
+                value={clientId}
+                onChange={(e) => onClientChange(e.target.value)}
+                className="chip rounded-xl px-3 py-2.5 text-xs font-bold text-snow outline-none focus:border-[var(--brand-line)] bg-transparent"
+              >
+                {CLIENTS.map((cl) => (
+                  <option key={cl.id} value={cl.id} className="bg-[#121a13]">{cl.name}</option>
+                ))}
+              </select>
+              <div className="min-w-0">
+                <div className="font-display font-bold text-snow text-sm truncate">
+                  {planId ? `تعديل تغذية ${client?.name}` : `خطة جديدة لـ${client?.name}`}
+                </div>
+                <div className="text-[10px] text-moss mt-0.5">{meals.length} وجبات يومياً — خاصة بهذا المتدرب وحده</div>
+              </div>
             </div>
             <div className="flex items-center gap-2.5">
               <Ring pct={(totals.cal / t.cal) * 100} size={62} thickness={6} label={`${Math.round((totals.cal / t.cal) * 100)}%`} subLabel="سعرات" />
-              <button onClick={() => toast("أُسندت خطة التغذية وأُشعر المتدرب بالتحديث", "brand")} className="btn-brand rounded-xl px-4 py-2 text-[11px] font-bold flex items-center gap-2">
-                <Icon name="check" className="w-4 h-4" /> إسناد الخطة
+              <button disabled={busyN || !clientId} onClick={saveMealPlan} className="btn-brand rounded-xl px-4 py-2 text-[11px] font-bold flex items-center gap-2 disabled:opacity-60">
+                <Icon name="check" className="w-4 h-4" /> {busyN ? "جاري الحفظ…" : planId ? "حفظ التعديلات" : "حفظ وإسناد"}
               </button>
             </div>
           </div>
@@ -395,7 +639,7 @@ function NutritionBuilder() {
             </div>
             <div className="space-y-2.5">
               {meal.items.map((it, idx) => {
-                const f = FOODS.find((x) => x.id === it.foodId)!;
+                const f = FOODS.find((x) => x.id === it.foodId) ?? { cal: 0, protein: 0, carbs: 0, fat: 0, nameAr: "" };
                 const k = it.grams / 100;
                 return (
                   <div key={`${it.foodId}-${idx}`} className="panel p-3.5 flex items-center gap-3 anim-fade-up" style={{ animationDelay: `${idx * 40}ms` }}>
@@ -496,8 +740,9 @@ function ProgressTab() {
 }
 
 export default function Trainer({ tab }: { tab: string }) {
-  if (tab === "builder") return <WorkoutBuilder />;
-  if (tab === "nutrition") return <NutritionBuilder />;
+  const [clientId, setClientId] = useState<string>(CLIENTS[0]?.id ?? "");
+  if (tab === "builder") return <WorkoutBuilder clientId={clientId} onClientChange={setClientId} />;
+  if (tab === "nutrition") return <NutritionBuilder clientId={clientId} onClientChange={setClientId} />;
   if (tab === "progress") return <ProgressTab />;
-  return <ClientsTab />;
+  return <ClientsTab selectedId={clientId} onSelect={setClientId} />;
 }

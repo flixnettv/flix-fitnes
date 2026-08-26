@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import LoginGate from "./components/LoginGate";
+import LoginGate, { isApex } from "./components/LoginGate";
+import { LangToggle } from "./components/LangToggle";
 import ClientApp, { ClientState } from "./dashboards/ClientApp";
 import GymAdmin from "./dashboards/GymAdmin";
 import SuperAdmin from "./dashboards/SuperAdmin";
@@ -19,31 +20,6 @@ const MoonIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
     <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
   </svg>
 );
-const GlobeIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className={className}>
-    <circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17M12 3.5c2.6 2.3 3.9 5.2 3.9 8.5s-1.3 6.2-3.9 8.5c-2.6-2.3-3.9-5.2-3.9-8.5s1.3-6.2 3.9-8.5Z" />
-  </svg>
-);
-
-/* ---------- toggles shared by header & login ---------- */
-export function LangToggle({ compact = false }: { compact?: boolean }) {
-  const { lang, setLang, toast, t } = useApp();
-  return (
-    <div className="flex items-center chip rounded-full p-1 gap-0.5" role="group" aria-label="language">
-      {(["ar", "en"] as const).map((l) => (
-        <button
-          key={l}
-          onClick={() => { if (lang !== l) { setLang(l); toast(t("toast.lang"), "mint"); } }}
-          className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all duration-300 ${lang === l ? "bg-[var(--brand)] text-[#0b110d] shadow-[0_4px_14px_-4px_var(--brand-line)]" : "text-moss hover:text-snow"}`}
-        >
-          {l === "ar" ? "عربي" : "EN"}
-        </button>
-      ))}
-      {!compact && <span className="px-1.5 text-moss2 hidden sm:grid place-items-center"><GlobeIcon className="w-3.5 h-3.5" /></span>}
-    </div>
-  );
-}
-
 export function ModeToggle() {
   const { mode, setMode, toast, t } = useApp();
   return (
@@ -170,8 +146,44 @@ function Ambient() {
   );
 }
 
+
+function SelfEditModal({ onClose }: { onClose: () => void }) {
+  const { user, toast } = useApp();
+  const [f, setF] = useState({ first_name: user?.firstName ?? "", last_name: user?.lastName ?? "", password: "" });
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!user) return;
+    setBusy(true);
+    try {
+      const patch: Record<string, unknown> = { first_name: f.first_name, last_name: f.last_name };
+      if (f.password) patch.password = f.password;
+      await updateUser(user.id, patch);
+      toast("\u062a\u0645 \u062a\u062d\u062f\u064a\u062b \u062d\u0633\u0627\u0628\u0643 \u2713", "mint");
+      onClose();
+    } catch { toast("\u0641\u0634\u0644 \u0627\u0644\u062a\u062d\u062f\u064a\u062b", "ember"); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative glass-deep rounded-3xl border border-[var(--glass-border)] w-full max-w-sm anim-fade-up p-6">
+        <div className="font-display font-bold text-sm text-snow mb-3">{"\u062d\u0633\u0627\u0628\u064a"}</div>
+        <div className="grid gap-2.5">
+          <input value={f.first_name} onChange={(e) => setF((x) => ({ ...x, first_name: e.target.value }))} placeholder="\u0627\u0644\u0627\u0633\u0645 \u0627\u0644\u0623\u0648\u0644" className="chip rounded-xl px-4 py-3 text-xs text-snow outline-none bg-transparent" />
+          <input value={f.last_name} onChange={(e) => setF((x) => ({ ...x, last_name: e.target.value }))} placeholder="\u0627\u0644\u0627\u0633\u0645 \u0627\u0644\u0623\u062e\u064a\u0631" className="chip rounded-xl px-4 py-3 text-xs text-snow outline-none bg-transparent" />
+          <input dir="ltr" type="password" value={f.password} onChange={(e) => setF((x) => ({ ...x, password: e.target.value }))} placeholder="\u0643\u0644\u0645\u0629 \u0645\u0631\u0648\u0631 \u062c\u062f\u064a\u062f\u0629 (\u0627\u062e\u062a\u064a\u0627\u0631\u064a)" className="chip rounded-xl px-4 py-3 text-xs text-snow outline-none bg-transparent" />
+          <button disabled={busy} onClick={save} className="btn-brand rounded-xl py-3 text-xs font-display font-bold disabled:opacity-60">
+            {busy ? "\u062c\u0627\u0631\u064a\u2026" : "\u062d\u0641\u0638"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Shell() {
-  const { role, logout, brand, lang, t, loc } = useApp();
+  const { role, logout, brand, lang, t, loc, user } = useApp();
+  const [selfEdit, setSelfEdit] = useState(false);
   const [tab, setTab] = useState("overview");
   const [clientState, setClientState] = useState<ClientState>({
     done: [0, 1, 2], loggedMeals: [0, 1], water: 4,
@@ -227,8 +239,9 @@ function Shell() {
                 <Icon name="users" className="w-4.5 h-4.5" />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-bold text-snow truncate">{t(ROLE_USER[role] as never)}</div>
-                <div className="text-[9px] text-moss2 truncate">{isAdmin ? "Admin · Full access" : `${loc({ nameAr: brand.nameAr, nameEn: brand.nameEn })}`}</div>
+                <div className="text-[11px] font-bold text-snow truncate">{user ? `${user.firstName} ${user.lastName}`.trim() || user.username : t(ROLE_USER[role] as never)}</div>
+                <div className="text-[9px] text-moss2 truncate">{user ? (isAdmin ? "\u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0646\u0635\u0629 \u00b7 \u0648\u0635\u0648\u0644 \u0643\u0627\u0645\u0644" : loc({ nameAr: brand.nameAr, nameEn: brand.nameEn })) : isAdmin ? "Admin \u00b7 Full access" : `${loc({ nameAr: brand.nameAr, nameEn: brand.nameEn })}`}</div>
+                <div className="text-[9px] text-moss2 truncate cursor-pointer hover:text-[var(--brand)]" onClick={() => setSelfEdit(true)}>{"\u062a\u0639\u062f\u064a\u0644 \u062d\u0633\u0627\u0628\u064a \u2713"}</div>
               </div>
             </div>
             <button onClick={logout} className="mt-3 w-full btn-ghost rounded-xl py-2 text-[11px] font-bold text-moss flex items-center justify-center gap-2 hover:text-blush hover:!border-blush/40">
@@ -239,7 +252,8 @@ function Shell() {
       </aside>
 
       {/* ======= main ======= */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      {selfEdit && <SelfEditModal onClose={() => setSelfEdit(false)} />}
+    <div className="flex-1 min-w-0 flex flex-col">
         <header className="sticky top-0 z-30 glass-deep border-b border-[var(--glass-border)]">
           <div className="flex items-center gap-3 px-4 lg:px-7 h-[62px]">
             {/* mobile mark */}
@@ -251,8 +265,7 @@ function Shell() {
               <h1 className="font-display font-bold text-[17px] leading-6 text-snow truncate">{t(current.key as never)}</h1>
             </div>
             <div className="ms-auto flex items-center gap-2.5">
-              <GymSwitcher />
-              <LangToggle />
+              {isApex() && <GymSwitcher />}
               <ModeToggle />
               <button onClick={logout} className="lg:hidden chip rounded-full w-9 h-9 grid place-items-center text-moss hover:text-blush transition-colors" aria-label="logout">
                 <Icon name="logout" className="w-4 h-4" />

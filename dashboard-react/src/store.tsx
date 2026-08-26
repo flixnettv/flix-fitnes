@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { GYMS, Gym, Role } from "./data";
+import { apiLogin, clearSession, restoreSession, postLoginSync, fetchBranding, ROLE_MAP, type AuthUser } from "./lib/api";
 import { DICT, Lang, TKey, detectBrowserLang } from "./i18n";
 
 export type Mode = "dark" | "light";
@@ -68,6 +69,10 @@ interface AppCtx {
   role: Role | null;
   login: (r: Role) => void;
   logout: () => void;
+  user: AuthUser | null;
+  authBusy: boolean;
+  authError: string | null;
+  realLogin: (email: string, password: string) => Promise<boolean>;
   gymId: string;
   gym: Gym;
   setGym: (id: string) => void;
@@ -102,6 +107,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
 
   const [role, setRole] = useState<Role | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [gymId, setGymId] = useState(GYMS[0].id);
   const gym = useMemo(() => GYMS.find((g) => g.id === gymId) ?? GYMS[0], [gymId]);
   const [brand, setBrandState] = useState<Branding>(() => brandFromGym(GYMS[0], lang));
@@ -175,11 +183,93 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = useCallback((r: Role) => {
+    // demo/preview entry — keeps the design explorable without credentials
+    setUser(null);
     setRole(r);
     dismissFirstVisit();
   }, [dismissFirstVisit]);
 
-  const logout = useCallback(() => setRole(null), []);
+  const logout = useCallback(() => {
+    clearSession();
+    setUser(null);
+    setRole(null);
+  }, []);
+
+  const applyBrandingFromApi = useCallback(async () => {
+    try {
+      const b = await fetchBranding();
+      setBrandState((prev) => ({
+        ...prev,
+        nameAr: b.name,
+        nameEn: b.name,
+        initial: (b.name || "F").trim().charAt(0),
+        accent: b.primary_color || prev.accent,
+        accent2: b.secondary_color || prev.accent2,
+        logoUrl: b.logo ?? null,
+        iconUrl: b.logo ?? null,
+      }));
+    } catch { /* keep current branding */ }
+  }, []);
+
+  const activateUser = useCallback(async (u: AuthUser) => {
+    setUser(u);
+    // data must be fully synced BEFORE the dashboards render
+    await postLoginSync();
+    await applyBrandingFromApi();
+    setRole(ROLE_MAP[u.role] ?? "client");
+    dismissFirstVisit();
+  }, [applyBrandingFromApi, dismissFirstVisit]);
+
+  const realLogin = useCallback(async (email: string, password: string): Promise<boolean> => {
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const u = await apiLogin(email, password);
+      await activateUser(u);
+      return true;
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "فشل تسجيل الدخول");
+      return false;
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [activateUser]);
+
+  /* brand the LOGIN screen from the subdomain's gym (before any auth) */
+  useEffect(() => {
+    (async () => {
+      try {
+        const b = await fetchBranding();
+        setBrandState((prev) => ({
+          ...prev,
+          nameAr: b.name,
+          nameEn: b.name,
+          initial: (b.name || "F").trim().charAt(0),
+          accent: b.primary_color || prev.accent,
+          accent2: b.secondary_color || prev.accent2,
+          logoUrl: b.logo ?? null,
+          iconUrl: b.logo ?? null,
+          bannerUrl: b.banner ?? null,
+          welcome: b.splash_title || "",
+        }));
+      } catch { /* keep defaults */ }
+    })();
+  }, []);
+
+  /* restore session on mount */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const u = await restoreSession();
+      if (alive && u) {
+        try {
+          await activateUser(u);
+        } catch { /* noop */ }
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setGym = useCallback((id: string) => {
     setGymId(id);
@@ -199,7 +289,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const loc = useCallback((o: { nameAr: string; nameEn: string }) => (lang === "en" ? o.nameEn : o.nameAr), [lang]);
 
   const value: AppCtx = {
-    role, login, logout,
+    role, login, logout, user, authBusy, authError, realLogin,
     gymId, gym, setGym,
     brand, setBrand, resetBrand,
     lang, setLang, mode, setMode,

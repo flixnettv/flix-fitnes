@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { EXERCISES, FOODS, GOALS, MEAL_TEMPLATE, WEIGHT_SERIES, WORKOUT_TEMPLATE } from "../data";
 import { useApp } from "../store";
+import { devicesMine, devicesStartPair, devicesUnpair, deviceMetrics, type MyDevice } from "../lib/api";
+import QRCode from "qrcode";
+import { createCheckin } from "../lib/api";
 import { AreaChart, Badge, Icon, Meter, Reveal, Ring, SectionTitle } from "../components/ui";
 
 export interface ClientState {
@@ -147,27 +150,31 @@ function HomeTab({ s, setS }: { s: ClientState; setS: SetState }) {
           {/* water + scale */}
           <Reveal delay={200}>
             <div className="glass p-5">
-              <div className="flex items-center justify-between mb-3">
-                <span className="flex items-center gap-2 text-xs font-bold text-snow"><Icon name="drop" className="w-4 h-4 text-sky2" /> {t("client.water")}</span>
-                <span className="font-display font-bold text-sm text-sky2" dir="ltr">{(s.water * 0.25).toFixed(2)} / 2L</span>
-              </div>
-              <div className="flex gap-1.5 flex-wrap">
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setS((p) => ({ ...p, water: p.water === i + 1 ? i : i + 1 }))}
-                    className={`w-9 h-11 rounded-lg border grid place-items-center transition-all duration-300 ${i < s.water ? "bg-sky2/20 border-sky2/60 text-sky2 -translate-y-0.5" : "chip text-[var(--color-line2)] hover:text-sky2"}`}
-                    aria-label="cup"
-                  >
-                    <Icon name="drop" className="w-4 h-4" />
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-2 mt-3">
-                <button onClick={() => { setS((p) => ({ ...p, water: Math.min(8, p.water + 1) })); toast("أُضيف كوب ماء 250مل 💧", "mint"); }} className="btn-ghost rounded-xl flex-1 py-2 text-[11px] font-bold text-moss flex items-center justify-center gap-2">
-                  <Icon name="plus" className="w-3.5 h-3.5" /> {t("client.cup")}
-                </button>
-              </div>
+              {brand.features.water && (
+                <>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="flex items-center gap-2 text-xs font-bold text-snow"><Icon name="drop" className="w-4 h-4 text-sky2" /> {t("client.water")}</span>
+                    <span className="font-display font-bold text-sm text-sky2" dir="ltr">{(s.water * 0.25).toFixed(2)} / 2L</span>
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setS((p) => ({ ...p, water: p.water === i + 1 ? i : i + 1 }))}
+                        className={`w-9 h-11 rounded-lg border grid place-items-center transition-all duration-300 ${i < s.water ? "bg-sky2/20 border-sky2/60 text-sky2 -translate-y-0.5" : "chip text-[var(--color-line2)] hover:text-sky2"}`}
+                        aria-label="cup"
+                      >
+                        <Icon name="drop" className="w-4 h-4" />
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button onClick={() => { setS((p) => ({ ...p, water: Math.min(8, p.water + 1) })); toast("أُضيف كوب ماء 250مل 💧", "mint"); }} className="btn-ghost rounded-xl flex-1 py-2 text-[11px] font-bold text-moss flex items-center justify-center gap-2">
+                      <Icon name="plus" className="w-3.5 h-3.5" /> {t("client.cup")}
+                    </button>
+                  </div>
+                </>
+              )}
               {lastScale && (
                 <div className="mt-3 chip rounded-xl px-3.5 py-2.5 flex items-center justify-between">
                   <span className="text-[10px] text-moss">⚖️ آخر وزن من الميزان</span>
@@ -246,7 +253,7 @@ function WorkoutsTab() {
 
 /* ================= nutrition ================= */
 function NutritionTab({ s, setS }: { s: ClientState; setS: SetState }) {
-  const { toast, t } = useApp();
+  const { toast, t, brand } = useApp();
   const mealKcal = (mi: number) =>
     Math.round(MEAL_TEMPLATE.meals[mi].items.reduce((sum, it) => {
       const f = FOODS.find((x) => x.id === it.foodId)!;
@@ -297,15 +304,17 @@ function NutritionTab({ s, setS }: { s: ClientState; setS: SetState }) {
             </Reveal>
           );
         })}
-        <Reveal delay={380}>
-          <button onClick={() => toast("فُتح الماسح — وجّه الكاميرا نحو باركود المنتج", "brand")} className="w-full h-full min-h-[170px] border border-dashed border-[var(--glass-border)] rounded-2xl grid place-items-center text-moss hover:text-[var(--brand)] hover:border-[var(--brand-line)] transition-colors group">
-            <span className="text-center">
-              <Icon name="camera" className="w-7 h-7 mx-auto mb-2 group-hover:scale-110 transition-transform" />
-              <span className="text-xs font-bold block">{t("client.scan")}</span>
-              <span className="text-[10px] text-moss2 block mt-1">500+ طعام محلي في القاعدة</span>
-            </span>
-          </button>
-        </Reveal>
+        {brand.features.scanner && (
+          <Reveal delay={380}>
+            <button onClick={() => toast("فُتح الماسح — وجّه الكاميرا نحو باركود المنتج", "brand")} className="w-full h-full min-h-[170px] border border-dashed border-[var(--glass-border)] rounded-2xl grid place-items-center text-moss hover:text-[var(--brand)] hover:border-[var(--brand-line)] transition-colors group">
+              <span className="text-center">
+                <Icon name="camera" className="w-7 h-7 mx-auto mb-2 group-hover:scale-110 transition-transform" />
+                <span className="text-xs font-bold block">{t("client.scan")}</span>
+                <span className="text-[10px] text-moss2 block mt-1">500+ طعام محلي في القاعدة</span>
+              </span>
+            </button>
+          </Reveal>
+        )}
       </div>
     </div>
   );
@@ -322,7 +331,66 @@ function DevicesTab({ s, setS }: { s: ClientState; setS: SetState }) {
   const { toast, t } = useApp();
   const [scaleSyncing, setScaleSyncing] = useState(false);
 
-  /* live stream while paired */
+  /* ===== real devices ===== */
+  const [devices, setDevices] = useState<MyDevice[]>([]);
+  const [pairQr, setPairQr] = useState<{ code: string; img: string } | null>(null);
+  const [weightSeries, setWeightSeries] = useState<number[]>([]);
+
+  const refreshDevices = async () => {
+    try {
+      const list = await devicesMine();
+      setDevices(list.filter((d) => d.status !== "revoked"));
+      const scaleDev = list.find((d) => d.kind === "scale" && d.status === "active");
+      if (scaleDev?.latest?.weight_kg) {
+        setS((p) => ({
+          ...p,
+          scaleLog: [{ w: scaleDev.latest.weight_kg!, fat: scaleDev.latest.body_fat ?? 0, at: "الآن" }, ...p.scaleLog].slice(0, 6),
+        }));
+      }
+      try {
+        const series = await deviceMetrics("weight_kg", 30);
+        if (series.length) setWeightSeries(series.map((x) => x.v));
+      } catch { /* noop */ }
+    } catch { /* offline */ }
+  };
+
+  useEffect(() => { refreshDevices(); }, []);
+
+  /* poll while a pairing is pending */
+  useEffect(() => {
+    if (!pairQr) return;
+    const id = window.setInterval(async () => {
+      try {
+        const list = await devicesMine();
+        const active = list.find((d) => d.status === "active" && d.kind === "scale");
+        if (active) {
+          window.clearInterval(id);
+          setPairQr(null);
+          await refreshDevices();
+          toast(`تم ربط «${active.name}» بنجاح ✓`, "mint");
+        }
+      } catch { /* noop */ }
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [pairQr]);
+
+  const startPair = async () => {
+    try {
+      const res = await devicesStartPair({ kind: "scale", name: "ميزان ذكي", brand: "" });
+      const img = await QRCode.toDataURL(res.qr_url, {
+        width: 320, margin: 1,
+        color: { dark: "#0B110D", light: "#C6F24E" },
+      });
+      setPairQr({ code: res.code, img });
+      toast("امسح الرمز بكاميرا الجوال — رمز صالح 15 دقيقة", "brand");
+    } catch { toast("تعذّر بدء الإقران — حاول مجدداً", "ember"); }
+  };
+
+  const unpairReal = async (id: string) => {
+    try { await devicesUnpair(id); await refreshDevices(); toast("تم فصل الجهاز", "ember"); } catch { toast("تعذّر الفصل", "ember"); }
+  };
+
+  /* live stream while watch sim paired */
   useEffect(() => {
     if (!s.device) return;
     const id = window.setInterval(() => {
@@ -344,17 +412,13 @@ function DevicesTab({ s, setS }: { s: ClientState; setS: SetState }) {
     toast(t("toast.unpaired"), "ember");
   };
 
-  const syncScale = () => {
+  /* real scale sync = refetch readings pushed via webhook */
+  const syncScale = async () => {
     setScaleSyncing(true);
-    window.setTimeout(() => {
-      const last = s.scaleLog[0]?.w ?? 86.2;
-      const w = Math.round((last - 0.1 - Math.random() * 0.3) * 10) / 10;
-      const fat = Math.round((17.6 - Math.random() * 0.4) * 10) / 10;
-      const at = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
-      setS((p) => ({ ...p, scaleLog: [{ w, fat, at }, ...p.scaleLog].slice(0, 6) }));
-      setScaleSyncing(false);
-      toast(`${t("toast.scaleSynced")} — ${w} كغ · دهون ${fat}%`, "brand");
-    }, 1400);
+    await refreshDevices();
+    setScaleSyncing(false);
+    const w = devices.find((d) => d.kind === "scale")?.latest?.weight_kg;
+    toast(w ? `آخر قراءة من الميزان — ${w} كغ ✓` : "لا قياسات جديدة بعد — قف على الميزان ثم أعد المحاولة", w ? "brand" : "ember");
   };
 
   return (
@@ -409,30 +473,66 @@ function DevicesTab({ s, setS }: { s: ClientState; setS: SetState }) {
         <Reveal delay={100}>
           <div className="glass p-5 relative overflow-hidden">
             <div className="absolute -top-14 -start-14 w-40 h-40 rounded-full blur-3xl opacity-20" style={{ background: "var(--brand)" }} />
-            <div className="flex items-center gap-3.5 relative">
-              <span className="w-12 h-12 rounded-2xl grid place-items-center bg-[var(--brand-soft)] border border-[var(--brand-line)] text-[var(--brand)] shrink-0">
-                <Icon name="target" className="w-6 h-6" />
-              </span>
-              <div className="flex-1">
-                <div className="text-sm font-bold text-snow font-display">{t("client.scale")}</div>
-                <div className="text-[10px] text-moss2" dir="ltr">Omron HBF-255T · Bluetooth</div>
-              </div>
-              <Badge tone="mint">{t("dev.online")}</Badge>
-            </div>
-            <div className="grid grid-cols-2 gap-3 mt-4 relative">
-              <div className="chip rounded-xl p-3 text-center">
-                <div className="text-[9px] text-moss2">الوزن</div>
-                <div className="font-display font-extrabold text-xl text-snow mt-0.5" dir="ltr">{s.scaleLog[0]?.w ?? "86.2"}<span className="text-[10px] text-moss"> kg</span></div>
-              </div>
-              <div className="chip rounded-xl p-3 text-center">
-                <div className="text-[9px] text-moss2">نسبة الدهون</div>
-                <div className="font-display font-extrabold text-xl text-ember mt-0.5" dir="ltr">{s.scaleLog[0]?.fat ?? "17.8"}<span className="text-[10px] text-moss"> %</span></div>
-              </div>
-            </div>
-            <button onClick={syncScale} disabled={scaleSyncing} className="btn-brand w-full rounded-xl py-3 mt-4 text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-75 relative">
-              {scaleSyncing ? (<><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="w-4 h-4 anim-spin"><path d="M12 3a9 9 0 1 0 9 9" /></svg>{t("dev.syncing")}</>) : (<><Icon name="bolt" className="w-4 h-4" />{t("client.scaleSync")}</>)}
-            </button>
-            <p className="text-[9px] text-moss2 mt-2.5 text-center">قف على الميزان ثم اضغط مزامنة — يُحدّث وزنك في كل التقارير والتسجيل الأسبوعي</p>
+            {(() => {
+              const scaleDev = devices.find((d) => d.kind === "scale");
+              const active = scaleDev?.status === "active";
+              return (
+                <>
+                  <div className="flex items-center gap-3.5 relative">
+                    <span className="w-12 h-12 rounded-2xl grid place-items-center bg-[var(--brand-soft)] border border-[var(--brand-line)] text-[var(--brand)] shrink-0">
+                      <Icon name="target" className="w-6 h-6" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold text-snow font-display truncate">{scaleDev ? scaleDev.name : t("client.scale")}</div>
+                      <div className="text-[10px] text-moss2" dir="ltr">{active ? `${scaleDev?.brand || "Smart"} · QR Linked` : "QR Pairing · Wi-Fi/Bluetooth"}</div>
+                    </div>
+                    {active
+                      ? <Badge tone="mint">{t("dev.online")}</Badge>
+                      : <button onClick={startPair} className="btn-brand rounded-xl px-4 py-2 text-[10px] font-bold">اربط بالـ QR</button>}
+                  </div>
+
+                  {pairQr && (
+                    <div className="mt-4 chip rounded-2xl p-4 text-center relative">
+                      <img src={pairQr.img} alt="QR" className="w-44 h-44 mx-auto rounded-xl" />
+                      <div className="font-display font-extrabold tracking-[6px] text-lg text-snow mt-2" dir="ltr">{pairQr.code}</div>
+                      <p className="text-[10px] text-moss leading-5 mt-1">امسح الرمز بكاميرا جوال الميزان أو افتح الرابط —<br/>يتم الربط تلقائياً خلال ثوانٍ ⏳</p>
+                      <button onClick={() => setPairQr(null)} className="btn-ghost rounded-xl px-4 py-1.5 text-[10px] font-bold text-moss mt-2">إلغاء</button>
+                    </div>
+                  )}
+
+                  {!pairQr && (
+                    <div className="grid grid-cols-2 gap-3 mt-4 relative">
+                      <div className="chip rounded-xl p-3 text-center">
+                        <div className="text-[9px] text-moss2">الوزن</div>
+                        <div className="font-display font-extrabold text-xl text-snow mt-0.5" dir="ltr">{scaleDev?.latest?.weight_kg ?? s.scaleLog[0]?.w ?? "—"}<span className="text-[10px] text-moss"> kg</span></div>
+                      </div>
+                      <div className="chip rounded-xl p-3 text-center">
+                        <div className="text-[9px] text-moss2">نسبة الدهون</div>
+                        <div className="font-display font-extrabold text-xl text-ember mt-0.5" dir="ltr">{scaleDev?.latest?.body_fat ?? s.scaleLog[0]?.fat ?? "—"}<span className="text-[10px] text-moss"> %</span></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {active && (
+                    <div className="grid grid-cols-2 gap-2.5 mt-4 relative">
+                      <button onClick={syncScale} disabled={scaleSyncing} className="btn-brand rounded-xl py-3 text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-75">
+                        {scaleSyncing ? (<><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="w-4 h-4 anim-spin"><path d="M12 3a9 9 0 1 0 9 9" /></svg>{t("dev.syncing")}</>) : (<><Icon name="bolt" className="w-4 h-4" />{t("client.scaleSync")}</>)}
+                      </button>
+                      <button onClick={() => unpairReal(scaleDev!.id)} className="btn-ghost rounded-xl py-3 text-xs font-bold text-moss hover:text-blush">فصل الجهاز</button>
+                    </div>
+                  )}
+                  {active && weightSeries.length > 1 && (
+                    <div className="mt-3 relative">
+                      <div className="text-[10px] text-moss mb-1">قراءات آخر 30 يوماً ({weightSeries.length})</div>
+                      <AreaChart data={weightSeries.slice(-12)} h={90} />
+                    </div>
+                  )}
+                  {!active && !pairQr && (
+                    <p className="text-[9px] text-moss2 mt-2.5 text-center relative">اربط ميزانك عبر رمز QR — كل قراءة تصل مباشرة لمدربك وتقاريرك</p>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </Reveal>
 
@@ -471,7 +571,7 @@ function DevicesTab({ s, setS }: { s: ClientState; setS: SetState }) {
 
 /* ================= progress ================= */
 function ProgressTab({ s }: { s: ClientState }) {
-  const { toast, t } = useApp();
+  const { toast, t, brand } = useApp();
   const stats = [
     { k: "الوزن", to: s.scaleLog[0]?.w?.toString() ?? "86.2", from: "91.5", unit: "كغ" },
     { k: "نسبة الدهون", to: s.scaleLog[0]?.fat?.toString() ?? "17.8", from: "22.4", unit: "%" },
@@ -489,21 +589,23 @@ function ProgressTab({ s }: { s: ClientState }) {
             <AreaChart data={WEIGHT_SERIES} labels={["أ1", "أ2", "أ3", "أ4", "أ5", "أ6", "أ7", "أ8", "أ9", "أ10", "أ11", "أ12"]} h={210} />
           </div>
         </Reveal>
-        <Reveal delay={100}>
-          <div className="glass p-5 h-full flex flex-col">
-            <SectionTitle icon="camera" title={t("client.photos")} sub={t("client.photosSub")} />
-            <div className="grid grid-cols-2 gap-3 flex-1">
-              {["أمامي", "جانبي", "خلفي", "قياسات"].map((x, i) => (
-                <button key={x} className="chip rounded-xl border-dashed border grid place-items-center min-h-[90px] text-moss hover:text-[var(--brand)] hover:border-[var(--brand-line)] transition-colors group" onClick={() => toast(i === 0 ? "فُتح عارض صور التقدم — قارن الأسبوع 1 مع الأسبوع 12" : `فُتحت الكاميرا لرفع صورة ${x} (تُشفَّر وتُشارك مع مدربك فقط)`, "brand")}>
-                  <span className="text-center">
-                    <Icon name={i === 3 ? "target" : "camera"} className="w-5 h-5 mx-auto mb-1.5 group-hover:scale-110 transition-transform" />
-                    <span className="text-[10px] font-bold block">{i === 0 ? "آخر صورة: الأسبوع 10" : `رفع ${x}`}</span>
-                  </span>
-                </button>
-              ))}
+        {brand.features.photos && (
+          <Reveal delay={100}>
+            <div className="glass p-5 h-full flex flex-col">
+              <SectionTitle icon="camera" title={t("client.photos")} sub={t("client.photosSub")} />
+              <div className="grid grid-cols-2 gap-3 flex-1">
+                {["أمامي", "جانبي", "خلفي", "قياسات"].map((x, i) => (
+                  <button key={x} className="chip rounded-xl border-dashed border grid place-items-center min-h-[90px] text-moss hover:text-[var(--brand)] hover:border-[var(--brand-line)] transition-colors group" onClick={() => toast(i === 0 ? "فُتح عارض صور التقدم — قارن الأسبوع 1 مع الأسبوع 12" : `فُتحت الكاميرا لرفع صورة ${x} (تُشفَّر وتُشارك مع مدربك فقط)`, "brand")}>
+                    <span className="text-center">
+                      <Icon name={i === 3 ? "target" : "camera"} className="w-5 h-5 mx-auto mb-1.5 group-hover:scale-110 transition-transform" />
+                      <span className="text-[10px] font-bold block">{i === 0 ? "آخر صورة: الأسبوع 10" : `رفع ${x}`}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        </Reveal>
+          </Reveal>
+        )}
       </div>
 
       <Reveal delay={120}>
@@ -560,6 +662,26 @@ function CheckinTab({ s }: { s: ClientState }) {
 
   useEffect(() => { if (scaleWeight) setForm((f) => ({ ...f, weight: scaleWeight })); }, [scaleWeight]);
 
+  const [sending, setSending] = useState(false);
+  const submitCheckin = async () => {
+    if (!form.weight || form.weight <= 0) { toast("أدخل وزناً صحيحاً", "ember"); return; }
+    setSending(true);
+    try {
+      await createCheckin({
+        weight_kg: form.weight,
+        energy_level: form.energy,
+        sleep_quality: form.sleep,
+        stress_level: form.stress,
+        adherence: Math.max(1, Math.round(form.adherence / 20)),
+        client_notes: form.note,
+      });
+      toast("وصل تسجيلك للمدرب ✓", "mint");
+      setForm((f) => ({ ...f, note: "" }));
+    } catch {
+      toast("تعذّر الإرسال — حاول مجدداً", "ember");
+    } finally { setSending(false); }
+  };
+
   const Slider = ({ label, val, set, color, hint }: { label: string; val: number; set: (n: number) => void; color: string; hint: string }) => (
     <div>
       <div className="flex justify-between text-[11px] mb-1.5">
@@ -613,10 +735,11 @@ function CheckinTab({ s }: { s: ClientState }) {
               />
             </label>
             <button
-              onClick={() => { toast(`${t("toast.sent")} (${form.weight} كغ)`, "brand"); setForm((f) => ({ ...f, note: "" })); }}
-              className="btn-brand rounded-xl px-6 py-3 text-xs font-bold flex items-center gap-2"
+              onClick={submitCheckin}
+              disabled={sending}
+              className="btn-brand rounded-xl px-6 py-3 text-xs font-bold flex items-center gap-2 disabled:opacity-60"
             >
-              <Icon name="check" className="w-4 h-4" /> {t("client.send")}
+              {sending ? "جاري الإرسال…" : (<><Icon name="check" className="w-4 h-4" /> {t("client.send")}</>)}
             </button>
           </div>
         </div>
