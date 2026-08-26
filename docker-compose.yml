@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: fitpro
+      POSTGRES_USER: fitpro
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - fitpro_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fitpro"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - fitpro_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      - DEBUG=false
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - SECRET_KEY=${SECRET_KEY}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - DATABASE_URL=postgresql://fitpro:${POSTGRES_PASSWORD}@postgres:5432/fitpro
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - FRONTEND_URL=${FRONTEND_URL}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
+      - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS}
+      - FITPRO_DYNAMIC_DIR=/dyn-fitpro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - /data/coolify/proxy/dynamic:/dyn-fitpro
+    networks:
+      - fitpro_network
+      - coolify
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./dashboard-react
+      dockerfile: Dockerfile
+    networks:
+      - coolify
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.fitpro-frontend.entrypoints=http
+      - traefik.http.routers.fitpro-frontend.rule=Host(`fitpro.hftv.qzz.io`)
+      - traefik.http.routers.fitpro-frontend.middlewares=redirect-to-https
+      - traefik.http.routers.fitpro-frontend-secure.entrypoints=https
+      - traefik.http.routers.fitpro-frontend-secure.rule=Host(`fitpro.hftv.qzz.io`)
+      - traefik.http.routers.fitpro-frontend-secure.tls=true
+      - traefik.http.routers.fitpro-frontend-secure.tls.certresolver=letsencrypt
+      - traefik.http.services.fitpro-frontend.loadbalancer.server.port=80
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  fitpro_network:
+    driver: bridge
+  coolify:
+    external: true
