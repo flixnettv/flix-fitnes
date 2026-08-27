@@ -54,6 +54,31 @@ export function clearSession() {
   localStorage.removeItem(LS_USER);
 }
 
+/** PATCH helper: JSON for plain values, multipart when a File or null (image ops) is present. */
+async function patchApi<T>(path: string, payload: Record<string, unknown>): Promise<T> {
+  const t = getTokens();
+  const headers: Record<string, string> = {};
+  if (t?.access) headers["Authorization"] = `Bearer ${t.access}`;
+  const isForm = Object.values(payload).some((v) => v instanceof File || v === null);
+  let body: string | FormData;
+  if (isForm) {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined) continue;
+      fd.append(k, v === null ? "" : (v as string | Blob));
+    }
+    body = fd;
+  } else {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(payload);
+  }
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PATCH", headers, body, signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`${res.status}`);
+  return res.json() as Promise<T>;
+}
+
 async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const t = getTokens();
   const res = await fetch(`${BASE}${path}`, {
@@ -427,7 +452,7 @@ export async function createGym(payload: Record<string, unknown>) {
 }
 
 export async function updateGym(gymId: string, payload: Record<string, unknown>) {
-  return api(`/gyms/${gymId}/`, { method: "PATCH", body: JSON.stringify(payload) });
+  return patchApi(`/gyms/${gymId}/`, payload);
 }
 
 export async function createTrainerStandalone(payload: Record<string, unknown>) {
@@ -449,23 +474,7 @@ export async function fetchMyAppearance(): Promise<MyAppearance> {
 
 /** PATCH appearance. images: File to set, null to clear, undefined = untouched. */
 export async function updateMyAppearance(payload: Record<string, unknown>): Promise<{ changed: string[] }> {
-  const hasFiles = Object.values(payload).some((v) => v instanceof File);
-  if (hasFiles) {
-    const fd = new FormData();
-    for (const [k, v] of Object.entries(payload)) {
-      if (v === undefined) continue;
-      fd.append(k, v as string | Blob);
-    }
-    const t = getTokens();
-    const res = await fetch(`${BASE}/my-appearance/update/`, {
-      method: "PATCH",
-      headers: t?.access ? { Authorization: `Bearer ${t.access}` } : {},
-      body: fd,
-    });
-    if (!res.ok) throw new Error(`${res.status}`);
-    return res.json();
-  }
-  return api("/my-appearance/update/", { method: "PATCH", body: JSON.stringify(payload) });
+  return patchApi<{ changed: string[] }>("/my-appearance/update/", payload);
 }
 
 /* ---------- platform admin: user account management ---------- */

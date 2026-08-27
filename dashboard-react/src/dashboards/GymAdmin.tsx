@@ -4,6 +4,8 @@ import { BODY_FONTS, DISPLAY_FONTS, Lang } from "../i18n";
 import { useApp } from "../store";
 import { LangToggle } from "../components/LangToggle";
 import { Avatar, Badge, Bars, Donut, Icon, IconName, Meter, Reveal, SectionTitle, Stars, Stepper, Switch, downloadCsv, useCountUp } from "../components/ui";
+import AppearanceEditor from "../components/AppearanceEditor";
+import { fetchMyAppearance, updateMyAppearance } from "../lib/api";
 
 const useL = () => {
   const { lang } = useApp();
