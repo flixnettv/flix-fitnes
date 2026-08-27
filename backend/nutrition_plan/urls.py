@@ -1,17 +1,13 @@
-from django.urls import path, include
+"""
+Nutrition App URLs
+"""
 from rest_framework.routers import DefaultRouter
-from .views import (
-    NutritionPlanViewSet, ClientNutritionPlanViewSet,
-    FoodCategoryViewSet, FoodItemViewSet, DailyNutritionLogViewSet,
-)
+from nutrition_plan.views import FoodViewSet, MealPlanViewSet, MealViewSet, NutritionLogViewSet
 
 router = DefaultRouter()
-router.register('plans', NutritionPlanViewSet, basename='nutrition_plans')
-router.register('client-plans', ClientNutritionPlanViewSet, basename='client_nutrition_plans')
-router.register('categories', FoodCategoryViewSet, basename='food_categories')
-router.register('foods', FoodItemViewSet, basename='foods')
-router.register('daily-logs', DailyNutritionLogViewSet, basename='daily_nutrition_logs')
+router.register(r"foods", FoodViewSet, basename="food")
+router.register(r"meal-plans", MealPlanViewSet, basename="meal-plan")
+router.register(r"meals", MealViewSet, basename="meal")
+router.register(r"logs", NutritionLogViewSet, basename="nutrition-log")
 
-urlpatterns = [
-    path('', include(router.urls)),
-]
+urlpatterns = router.urls

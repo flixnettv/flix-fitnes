@@ -1,0 +1,22 @@
+const { chromium } = require("playwright");
+(async () => {
+  const b = await chromium.launch();
+  const p = await (await b.newContext({ viewport: { width: 1366, height: 900 } })).newPage();
+  p.setDefaultTimeout(20000);
+  await p.goto("https://fitpro.hftv.qzz.io", { waitUntil: "domcontentloaded" });
+  await p.fill("input[type=email]", "trainer@fitpro.hftv.qzz.io");
+  await p.fill("input[type=password]", "Trainer2026!");
+  await p.click("button[type=submit]");
+  await p.waitForTimeout(3500);
+  await p.locator("button, a").filter({ hasText: "باني التمرين" }).first().click();
+  await p.waitForTimeout(2000);
+  console.log("URL:", p.url());
+  const sel = p.locator("select").first();
+  console.log("selects:", await p.locator("select").count());
+  await sel.selectOption({ index: 1 }).catch((e) => console.log("selErr:", e.message.slice(0, 80)));
+  await p.waitForTimeout(2500);
+  const btns = await p.locator("button").allTextContents();
+  console.log("BUTTONS:", JSON.stringify(btns.map((t) => t.trim()).filter(Boolean)));
+  await p.screenshot({ path: "shots/dbg-builder.png", fullPage: true });
+  await b.close();
+})().catch((e) => { console.error("ERR:", e.message.slice(0, 200)); process.exit(1); });

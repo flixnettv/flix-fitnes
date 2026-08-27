@@ -1,7 +1,6 @@
 from django.apps import AppConfig
 
-
 class AcctConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'acct'
-    verbose_name = 'إدارة الحسابات'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "acct"
+    verbose_name = "Accounts"

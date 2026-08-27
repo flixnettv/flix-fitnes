@@ -1,7 +1,4 @@
 from django.contrib import admin
-from .models import BodyMeasurement, ProgressPhoto, Device, DeviceMeasurement
+from .models import BodyMeasurement
 
 admin.site.register(BodyMeasurement)
-admin.site.register(ProgressPhoto)
-admin.site.register(Device)
-admin.site.register(DeviceMeasurement)

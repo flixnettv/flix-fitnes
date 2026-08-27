@@ -1,6 +1,5 @@
 from django.apps import AppConfig
-
 class WorkoutTrackingConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'workout_tracking'
-    verbose_name = 'تتبع التمارين'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "workout_tracking"
+    verbose_name = "Workout Tracking"

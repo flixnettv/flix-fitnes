@@ -1,12 +1,17 @@
-from django.urls import path, include
+"""
+Workout App URLs
+"""
 from rest_framework.routers import DefaultRouter
-from .views import ClientPlanViewSet, WorkoutSessionViewSet, WorkoutLogViewSet
+from workout_tracking.views import (
+    ExerciseViewSet, WorkoutPlanViewSet, WorkoutLogViewSet,
+    WorkoutDayViewSet, WorkoutExerciseViewSet,
+)
 
 router = DefaultRouter()
-router.register('client-plans', ClientPlanViewSet, basename='client_plans')
-router.register('sessions', WorkoutSessionViewSet, basename='sessions')
-router.register('logs', WorkoutLogViewSet, basename='logs')
+router.register(r"exercises", ExerciseViewSet, basename="exercise")
+router.register(r"plans", WorkoutPlanViewSet, basename="workout-plan")
+router.register(r"logs", WorkoutLogViewSet, basename="workout-log")
+router.register(r"days", WorkoutDayViewSet, basename="workout-day")
+router.register(r"plan-exercises", WorkoutExerciseViewSet, basename="workout-exercise")
 
-urlpatterns = [
-    path('', include(router.urls)),
-]
+urlpatterns = router.urls

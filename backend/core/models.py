@@ -1,144 +1,50 @@
 """
-FitPro Core Models - Multi-tenancy Foundation (ported from fitpro.core.models)
-Adapted: gym reference -> gym_center.GymCenter
-Fixed related_name to avoid clashes across apps
+Core TenantBase and mixins - nullable gym (multi-tenant safe).
 """
 import uuid
 from django.db import models
 from django.conf import settings
-from django.utils import timezone
-from django.db.models.signals import pre_save
-from django.dispatch import receiver
 
 
-class TenantBaseModel(models.Model):
+class TimeStampedMixin(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class ActivationMixin(models.Model):
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        abstract = True
+
+
+class TenantBaseModel(TimeStampedMixin, models.Model):
     """
-    Abstract base model for all tenant-scoped models.
-    Automatically adds gym (FK) and tenant_id fields for RLS.
-    Adapted from fitpro.core.models.TenantBaseModel
+    Base for all tenant-scoped models.
+    - gym FK is nullable to allow makemigrations without breaking existing data
+      and to support platform-level objects (e.g. templates) that may not yet be assigned.
+    - created_by tracks creator.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # gym nullable -> requirement #6
     gym = models.ForeignKey(
-        'gym_center.GymCenter',
+        "gym_center.Gym",
         on_delete=models.CASCADE,
-        related_name='%(app_label)s_%(class)s_set',
-        verbose_name='Gym',
         null=True,
         blank=True,
+        related_name="%(class)s_set",
     )
-    tenant_id = models.UUIDField(
-        editable=False,
-        db_index=True,
-        null=True,
-        blank=True,
-        verbose_name='Tenant ID'
-    )
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created At')
-    updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated At')
-    is_active = models.BooleanField(default=True, verbose_name='Is Active')
+    tenant_id = models.UUIDField(null=True, blank=True, help_text="Tenant copy of gym id for sharding")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='%(app_label)s_%(class)s_created',
-        verbose_name='Created By'
-    )
-    updated_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='%(app_label)s_%(class)s_updated',
-        verbose_name='Updated By'
+        related_name="%(class)s_created",
     )
 
     class Meta:
         abstract = True
-        ordering = ['-created_at']
-
-    def save(self, *args, **kwargs):
-        if self.gym_id and not self.tenant_id:
-            self.tenant_id = self.gym_id
-        super().save(*args, **kwargs)
-
-
-class ActivationMixin(models.Model):
-    """Mixin for models that require manual activation."""
-    is_active = models.BooleanField(default=False, verbose_name='Is Active')
-    activated_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='%(app_label)s_%(class)s_activated',
-        verbose_name='Activated By'
-    )
-    activated_at = models.DateTimeField(null=True, blank=True, verbose_name='Activated At')
-
-    class Meta:
-        abstract = True
-
-    def activate(self, user):
-        self.is_active = True
-        self.activated_by = user
-        self.activated_at = timezone.now()
-        self.save(update_fields=['is_active', 'activated_by', 'activated_at'])
-
-    def deactivate(self):
-        self.is_active = False
-        self.save(update_fields=['is_active'])
-
-    @property
-    def is_activated(self):
-        return self.is_active and self.activated_at is not None
-
-
-class TimeStampedMixin(models.Model):
-    """Adds created_at and updated_at fields."""
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created At')
-    updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated At')
-
-    class Meta:
-        abstract = True
-
-
-class SoftDeleteMixin(models.Model):
-    """Adds soft delete capability."""
-    deleted_at = models.DateTimeField(null=True, blank=True, verbose_name='Deleted At')
-    deleted_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='%(app_label)s_%(class)s_deleted',
-        verbose_name='Deleted By'
-    )
-
-    class Meta:
-        abstract = True
-
-    def soft_delete(self, user=None):
-        self.deleted_at = timezone.now()
-        self.deleted_by = user
-        self.is_active = False
-        self.save(update_fields=['deleted_at', 'deleted_by', 'is_active'])
-
-    def restore(self):
-        self.deleted_at = None
-        self.deleted_by = None
-        self.is_active = True
-        self.save(update_fields=['deleted_at', 'deleted_by', 'is_active'])
-
-    @property
-    def is_deleted(self):
-        return self.deleted_at is not None
-
-
-@receiver(pre_save)
-def set_tenant_id(sender, instance, **kwargs):
-    if hasattr(instance, 'gym_id') and instance.gym_id and not getattr(instance, 'tenant_id', None):
-        try:
-            instance.tenant_id = instance.gym_id
-        except Exception:
-            pass

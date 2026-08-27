@@ -1,30 +1,10 @@
 from rest_framework import serializers
-from .models import BodyMeasurement, ProgressPhoto, Device, DeviceMeasurement
-
+from .models import BodyMeasurement
 
 class BodyMeasurementSerializer(serializers.ModelSerializer):
-    client_name = serializers.CharField(source='client.get_full_name', read_only=True)
-
+    client_name = serializers.CharField(source="client.user.get_full_name", read_only=True)
     class Meta:
         model = BodyMeasurement
-        fields = '__all__'
-
-
-class ProgressPhotoSerializer(serializers.ModelSerializer):
-    client_name = serializers.CharField(source='client.get_full_name', read_only=True)
-
-    class Meta:
-        model = ProgressPhoto
-        fields = '__all__'
-
-
-class DeviceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Device
-        fields = '__all__'
-
-
-class DeviceMeasurementSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = DeviceMeasurement
-        fields = '__all__'
+        fields = ["id", "client", "client_name", "date", "weight_kg", "body_fat_percent", "muscle_mass_kg",
+                  "measurements", "chest_cm", "waist_cm", "hips_cm", "arm_cm", "thigh_cm", "notes", "created_at"]
+        read_only_fields = ["id", "created_at"]

@@ -1,172 +1,108 @@
-from rest_framework import generics, permissions, viewsets, status
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.contrib.auth import authenticate, get_user_model
-from .models import CoachProfile
-from .serializers import (
-    RegisterSerializer, UserSerializer, UserListSerializer,
-    CoachProfileSerializer, CoachCreateSerializer, CoachPublicSerializer,
-)
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.exceptions import PermissionDenied as DRFPermissionDenied
+from django.contrib.auth import get_user_model, authenticate
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from .models import TrainerProfile, ClientProfile
+from .serializers import UserSerializer, MeSerializer
 
 User = get_user_model()
 
+PROTECTED_USER_FIELDS = {"role", "username", "first_name", "last_name"}
 
-class IsOwner(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role == 'owner'
+class AuthViewSet(viewsets.ViewSet):
+    permission_classes = [AllowAny]
 
-
-class IsCoach(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role == 'coach'
-
-
-class RegisterView(generics.CreateAPIView):
-    queryset = User.objects.all()
-    serializer_class = RegisterSerializer
-    permission_classes = [permissions.AllowAny]
-
-
-class UserProfileView(generics.RetrieveUpdateAPIView):
-    serializer_class = UserSerializer
-
-    def get_object(self):
-        return self.request.user
-
-
-class UserListView(viewsets.ReadOnlyModelViewSet):
-    serializer_class = UserListSerializer
-
-    def get_queryset(self):
-        user = self.request.user
-        if user.role == 'owner':
-            return User.objects.all()
-        elif user.role == 'coach':
-            return User.objects.filter(assigned_coach=user)
-        return User.objects.filter(id=user.id)
-
-
-# ===== Owner Admin Views =====
-
-class OwnerCoachViewSet(viewsets.ModelViewSet):
-    """Owner manages coaches and their branding"""
-    permission_classes = [IsOwner]
-
-    def get_serializer_class(self):
-        if self.action == 'create':
-            return CoachCreateSerializer
-        return CoachProfileSerializer
-
-    def get_queryset(self):
-        return CoachProfile.objects.select_related('user').all()
-
-    def perform_destroy(self, instance):
-        user = instance.user
-        instance.delete()
-        user.delete()
-
-
-class OwnerStatsView(generics.GenericAPIView):
-    """Owner dashboard statistics"""
-    permission_classes = [IsOwner]
-
-    def get(self, request):
-        from workout_tracking.models import ClientPlan
-        from nutrition_plan.models import ClientNutritionPlan
-        from body_measurements.models import BodyMeasurement
-
-        total_coaches = CoachProfile.objects.filter(is_active=True).count()
-        total_clients = User.objects.filter(role='client').count()
-        active_workout_plans = ClientPlan.objects.filter(is_active=True).count()
-        active_nutrition_plans = ClientNutritionPlan.objects.filter(is_active=True).count()
-        total_measurements = BodyMeasurement.objects.count()
-
+    @action(detail=False, methods=["post"], url_path="login")
+    def login(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        password = request.data.get("password") or ""
+        user = authenticate(request, username=email, password=password) or authenticate(request, email=email, password=password)
+        # Fallback: get by email manually
+        if user is None:
+            try:
+                u = User.objects.get(email=email)
+                if u.check_password(password):
+                    if not u.is_active:
+                        return Response({"detail": "الحساب معطل"}, status=401)
+                    user = u
+                else:
+                    return Response({"detail": "بيانات الدخول غير صحيحة"}, status=401)
+            except User.DoesNotExist:
+                return Response({"detail": "بيانات الدخول غير صحيحة"}, status=401)
+        if not user.is_active:
+            return Response({"detail": "الحساب معطل"}, status=401)
+        refresh = RefreshToken.for_user(user)
         return Response({
-            'total_coaches': total_coaches,
-            'total_clients': total_clients,
-            'active_workout_plans': active_workout_plans,
-            'active_nutrition_plans': active_nutrition_plans,
-            'total_measurements': total_measurements,
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": MeSerializer(user).data,
         })
 
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="me")
+    def me(self, request):
+        return Response(MeSerializer(request.user).data)
 
-class CoachClientViewSet(viewsets.ModelViewSet):
-    """Coach manages their own clients"""
-    serializer_class = UserSerializer
-    permission_classes = [IsCoach]
-
-    def get_queryset(self):
-        return User.objects.filter(
-            assigned_coach=self.request.user, role='client'
-        )
-
-    def perform_create(self, instance):
-        instance.assigned_coach = self.request.user
-        instance.role = 'client'
-        instance.save()
-
-    @action(detail=False, methods=['post'])
-    def create_client(self, request):
-        serializer = RegisterSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save(role='client', assigned_coach=request.user)
-        return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
-
-
-# ===== Public Views (no auth needed) =====
-
-class CoachPublicView(generics.RetrieveAPIView):
-    """Public coach profile by slug - for branding the login page"""
-    queryset = CoachProfile.objects.filter(is_active=True)
-    serializer_class = CoachPublicSerializer
-    permission_classes = [permissions.AllowAny]
-    lookup_field = 'slug'
-
-
-class CoachClientRegisterView(generics.CreateAPIView):
-    """Register a new client under a specific coach (public)"""
-    serializer_class = RegisterSerializer
-    permission_classes = [permissions.AllowAny]
-
-    def create(self, request, *args, **kwargs):
-        slug = self.kwargs.get('slug')
+    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated], url_path="logout")
+    def logout(self, request):
         try:
-            coach_profile = CoachProfile.objects.get(slug=slug, is_active=True)
-        except CoachProfile.DoesNotExist:
-            return Response(
-                {'detail': 'هذا المدرب غير موجود'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            token = RefreshToken(request.data.get("refresh"))
+            token.blacklist()
+        except Exception:
+            pass
+        return Response({"ok": True})
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save(role='client', assigned_coach=coach_profile.user)
-        return Response(
-            {'detail': 'تم التسجيل بنجاح', 'user_id': user.id},
-            status=status.HTTP_201_CREATED
-        )
+class UserViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.all().order_by("-date_joined")
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        u = self.request.user
+        if u.is_superuser:
+            return User.objects.all().order_by("-date_joined")
+        # gym admin sees his gym users
+        gym = u.get_gym()
+        if gym:
+            ids = list(TrainerProfile.objects.filter(gym=gym).values_list("user_id", flat=True)) + \
+                  list(ClientProfile.objects.filter(gym=gym).values_list("user_id", flat=True))
+            # add gym admin himself
+            if hasattr(u, "gym_admin_profile"):
+                ids.append(u.id)
+            return User.objects.filter(id__in=ids)
+        return User.objects.none()
 
-class CoachStatsView(generics.GenericAPIView):
-    """Coach dashboard statistics"""
-    permission_classes = [IsCoach]
+    def perform_update(self, serializer):
+        if not self.request.user.is_superuser:
+            for f in PROTECTED_USER_FIELDS & set(self.request.data.keys()):
+                raise DRFPermissionDenied("تعديل الاسم أو الدور محصور بإدارة المنصة.")
+        # handle password
+        pwd = self.request.data.get("password")
+        user = serializer.save()
+        if pwd:
+            user.set_password(pwd)
+            user.save(update_fields=["password"])
 
-    def get(self, request):
-        from workout_tracking.models import ClientPlan
-        from body_measurements.models import BodyMeasurement
-        from datetime import date
+    @action(detail=True, methods=["post"], url_path="reset-password")
+    def reset_password(self, request, pk=None):
+        if not request.user.is_superuser:
+            return Response({"error": "للمنصة فقط"}, status=403)
+        user = self.get_object()
+        pwd = request.data.get("password") or ""
+        if len(pwd) < 8:
+            return Response({"error": "كلمة المرور 8+ أحرف"}, status=400)
+        user.set_password(pwd)
+        user.save(update_fields=["password"])
+        return Response({"ok": True})
 
-        my_clients = User.objects.filter(assigned_coach=request.user, role='client')
-        active_plans = ClientPlan.objects.filter(
-            coach=request.user, is_active=True
-        ).count()
-        total_measurements = BodyMeasurement.objects.filter(
-            client__assigned_coach=request.user
-        ).count()
-
-        return Response({
-            'total_clients': my_clients.count(),
-            'active_clients': my_clients.filter(is_active=True).count(),
-            'active_plans': active_plans,
-            'total_measurements': total_measurements,
-        })
+    @action(detail=True, methods=["post"])
+    def toggle_active(self, request, pk=None):
+        user = self.get_object()
+        if not request.user.is_superuser:
+            return Response({"error": "للمنصة فقط"}, status=403)
+        user.is_active = not user.is_active
+        user.save(update_fields=["is_active"])
+        return Response({"is_active": user.is_active})

@@ -1,49 +1,34 @@
 from rest_framework import viewsets
-from .models import BodyMeasurement, ProgressPhoto, Device, DeviceMeasurement
-from .serializers import BodyMeasurementSerializer, ProgressPhotoSerializer, DeviceSerializer, DeviceMeasurementSerializer
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
+from workout_tracking.views import TenantScopedViewSet
+from .models import BodyMeasurement
+from .serializers import BodyMeasurementSerializer
 
-
-class BodyMeasurementViewSet(viewsets.ModelViewSet):
+class BodyMeasurementViewSet(TenantScopedViewSet):
     serializer_class = BodyMeasurementSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["client", "date"]
+    ordering_fields = ["date", "weight_kg"]
 
     def get_queryset(self):
         user = self.request.user
-        if user.role in ('owner', 'coach'):
-            return BodyMeasurement.objects.all()
-        return BodyMeasurement.objects.filter(client=user)
+        gym = user.get_gym()
+        if gym is None:
+            return BodyMeasurement.objects.none()
+        qs = BodyMeasurement.objects.filter(gym=gym)
+        if hasattr(user, "client_profile"):
+            return qs.filter(client=user.client_profile)
+        if hasattr(user, "trainer_profile"):
+            return qs.filter(client__trainer=user.trainer_profile)
+        return qs
 
     def perform_create(self, serializer):
-        serializer.save(client=self.request.user)
-
-
-class ProgressPhotoViewSet(viewsets.ModelViewSet):
-    serializer_class = ProgressPhotoSerializer
-
-    def get_queryset(self):
-        user = self.request.user
-        if user.role in ('owner', 'coach'):
-            return ProgressPhoto.objects.all()
-        return ProgressPhoto.objects.filter(client=user)
-
-    def perform_create(self, serializer):
-        serializer.save(client=self.request.user)
-
-
-class DeviceViewSet(viewsets.ModelViewSet):
-    serializer_class = DeviceSerializer
-
-    def get_queryset(self):
-        return Device.objects.filter(user=self.request.user)
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
-
-
-class DeviceMeasurementViewSet(viewsets.ModelViewSet):
-    serializer_class = DeviceMeasurementSerializer
-
-    def get_queryset(self):
-        user = self.request.user
-        if user.role in ('owner', 'coach'):
-            return DeviceMeasurement.objects.all()
-        return DeviceMeasurement.objects.filter(user=user)
+        gym = self.get_gym()
+        client = getattr(self.request.user, "client_profile", None)
+        if client is None and gym:
+            client_id = self.request.data.get("client")
+            if client_id:
+                from acct.models import ClientProfile
+                client = ClientProfile.objects.filter(id=client_id, gym=gym).first()
+        serializer.save(gym=gym, client=client)

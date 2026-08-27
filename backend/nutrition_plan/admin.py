@@ -1,8 +1,8 @@
 from django.contrib import admin
-from .models import NutritionPlan, ClientNutritionPlan, FoodCategory, FoodItem, DailyNutritionLog
+from .models import Food, MealPlan, Meal, MealFood, NutritionLog
 
-admin.site.register(NutritionPlan)
-admin.site.register(ClientNutritionPlan)
-admin.site.register(FoodCategory)
-admin.site.register(FoodItem)
-admin.site.register(DailyNutritionLog)
+admin.site.register(Food)
+admin.site.register(MealPlan)
+admin.site.register(Meal)
+admin.site.register(MealFood)
+admin.site.register(NutritionLog)

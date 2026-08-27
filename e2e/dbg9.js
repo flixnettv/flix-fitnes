@@ -1,0 +1,25 @@
+const { chromium } = require("playwright");
+(async () => {
+  const b = await chromium.launch();
+  const p = await (await b.newContext({ viewport: { width: 1366, height: 900 }, locale: "ar" })).newPage();
+  p.setDefaultTimeout(15000);
+  const errs = [];
+  p.on("pageerror", (e) => errs.push(e.message.slice(0, 250)));
+  await p.goto("https://fitpro.hftv.qzz.io", { waitUntil: "domcontentloaded" });
+  await p.waitForSelector("input[type=email]");
+  await p.fill("input[type=email]", "flixnettv@gmail.com");
+  await p.fill("input[type=password]", "#Flix1571980");
+  await p.click("button[type=submit]");
+  await p.waitForSelector("text=نظرة عامة", { timeout: 20000 });
+  await p.locator("text=الصالات").first().click();
+  await p.waitForTimeout(2000);
+  await p.locator("button:has-text('الهوية')").first().waitFor();
+  await p.locator("button:has-text('الهوية')").first().click({ force: true });
+  await p.waitForTimeout(1500);
+  console.log("modal title:", await p.locator("text=هوية:").count());
+  console.log("color inputs:", await p.locator("input[type=color]").count());
+  console.log("save btn:", await p.locator("button:has-text('حفظ التغييرات')").count());
+  console.log("errs:", errs.join(" || ") || "none");
+  await p.screenshot({ path: "shots/dbg9.png", fullPage: true });
+  await b.close();
+})().catch((e) => { console.error("FATAL:", e.message.slice(0, 200)); process.exit(1); });
