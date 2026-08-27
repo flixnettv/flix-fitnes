@@ -9,50 +9,53 @@
 - ممنوع اعتباره مصدر حقيقة للنشر
 
 **الخادم 65.75.200.19 = بيئة التكامل والإنتاج الوحيدة**
-- مصدر الحقيقة الوحيد: `/home/flix/fitpro-center` (git: https://github.com/flixnettv/flix-fitnes.git فرع main)
-- Backend الحقيقي: `/home/flix/fitpro-center/backend` (تطبيقات: acct, gym_center, workout_tracking, nutrition_plan, body_measurements, exercise_db, notif)
-- أي تعديل Backend: عبر SSH مباشرة على مسارات الخادم المذكورة، ثم `docker cp` إلى الحاويتين `/app/src/fitpro/` **و** `/usr/local/lib/python3.12/site-packages/fitpro/` ثم `docker restart`
+- مصدر الحقيقة الوحيد: مستودع GitHub `https://github.com/flixnettv/flix-fitnes` فرع `main`
+- النشر يتم عبر **Dokku** على الخادم: أي دفع إلى `main` (GitHub) ⇒ إعادة بناء عبر `Dockerfile` في جذر الريبو ⇒ إعادة نشر تلقائية لتطبيق `fitpro`
+- أي كود يتوجب أولاً الدفع إلى `main` **ثم** التحقق على الحي — لا تعديل مباشر على الخادم إلا عبر تغيير في الريبو
+- داخل الحاوية: Django في `/app` (Gunicorn:8000) + nginx داخلي :8080 (يوزع الواجهة/الـPWA/الـAPI) — الـ image يُعاد بناؤه بالكامل مع كل دفع، فلا توجد مسارات كود مزدوجة
 - التحقق من أي تكامل: دائماً على النطاق الحي (`curl https://fitpro.hftv.qzz.io/...` أو متصفح) — **أبداً محلياً**
 
-## 📦 تقسيم المشروع الصحيح
+## 📦 تقسيم المشروع الصحيح (نشر Dokku)
 
-| الجزء | المصدر الحقيقي | النشر |
+| الجزء | المصدر الحقيقي | النشر (تُبنى في `Dockerfile`) |
 |-------|--------|-------|
-| واجهة React (Dashboard) | محلي: /home/flix/Desktop/tar/ (مؤقت) → ينقل إلى الخادم: /home/flix/fitpro-center/dashboard-react/ | `npm run build` محلي ← tar ← scp ← `/home/flix/fitpro-center/dashboard-react/dist-official/` ثم Nginx |
-| واجهة Flutter | `/home/flix/fitpro-center/flutter-app` | `flutter build web` على الخادم عبر docker |
-| Backend Django | `/home/flix/fitpro-center/backend` | `COPY backend/ .` في Dockerfile.backend |
-| Nginx | `/home/flix/fitpro-center/nginx/` | حاوية fitpro-web-static |
-| Traefik dynamic | `/data/coolify/proxy/dynamic/fitpro-gyms.yml` | مراقب تلقائياً — يُحدَّث من Backend عند إنشاء صالة |
+| واجهة React (Dashboard) | `dashboard-react/` | Stage 1 (node:20-alpine → `npm run build`) ⟶ يُخدم عند `/` من `/opt/web/dashboard` |
+| واجهة Flutter (PWA) | `flutter-app/` | Stage 2 (flutter stable → `flutter build web --base-href /pwa/`) ⟶ يُخدم عند `/pwa/` |
+| صفحة إقران الأجهزة | `pairpage/` | نسخة ثابتة ⟶ يُخدم عند `/pair/` |
+| Backend Django | `backend/` | Stage 3 (python:3.12-slim: pip + `COPY backend/ .` + Gunicorn) |
+| Nginx الداخلي | `nginx/dokku-default.conf` | يُنسخ إلى `/etc/nginx/conf.d/default.conf` — يوجّه `/api|admin|health|ready` إلى Django، و`/static`+`/media` من volume `/data` |
+| قاعدة البيانات | خدمات Dokku: `fitpro-db` (Postgres) + `fitpro-cache` (Redis) | عبر `DATABASE_URL` و`REDIS_URL` المُحقنة من `dokku postgres:link` / `redis:link` |
+| Celery | — | عملية `worker` في `Procfile` (من نفس الـ image) |
 
 ## 🚫 أخطاء لا تتكرر (مستفادة بالدم)
 
-1. **لا تخلط** مسارات محلية وبعيدة في نفس سكربت التعديل — قسّمه: سكربت محلي + سكربت يُنقل عبر scp
+1. **لا تخلط** مسارات محلية وبعيدة في نفس سكربت التعديل — قسّمه: سكربت محلي + سكربت يُنقل عبر scp (يقلص الوضوح بعد Dokku لكنه قاعدة ذهبية حتى الآن)
 2. **heredoc عبر SSH يفسد الملفات** (يحذف علامات الاقتباس) — النقل دائماً: write محلي ← scp ← python3
-3. **باك إند الحاوية له مساران للكود**: `/app/src/fitpro/` (يُحمَّل أولاً — يحجب الآخر!) و `site-packages/fitpro/` — حدّث **كليهما** دائماً
-4. **preload_app=True**: `kill -HUP` لا يكفي — أي تغيير urlconf/models يتطلب `docker restart` كامل
+3. **كل تعديل يتطلب دفعاً لإعادة البناء** — لا يوجد تعديل "حي" على الحاوية: التغيير لابد أن يُلتقط في `main` ثم `git push` (ملفات/حذف/تعديل وأيضاً إضافة متغير بيئة جديد يتطلب إعادة دفع)
+4. **نظام nginx الداخلي يعيد الكتابة**: لا تضع `X-Forwarded-Proto $scheme` داخل الحاوية — مرّر رأس الأصل من الطبقة الأولى (`$http_x_forwarded_proto`) وإلا دار حلقة `SECURE_SSL_REDIRECT` (301 لا نهائية)
 5. **حقول تُحقن في perform_create** (client/gym/trainer) يجب أن تكون `read_only=True` في السيريالايزر وإلا فشل 400
 6. **ترتيب مسارات Django**: المسارات الحرفية قبل `include()` — ومسار التفاصيل `^(pk)/$` يلتهم أي كلمة ثابتة مسجلة بعده (سجّل المحدد أولاً)
-7. **Traefik v3.6**: `HostRegexp` مع `{var}` مكسور — استخدم regex مباشر بلا أقواس؛ شهادات الصب دومينات عبر **ملف ديناميكي** (مجلد dynamic مُراقب) لا عبر docker labels
-8. **مشروع Coolify المكرر**: يوجد مشروعان باسم FitPro Center (id 9 قديم فيه wger-fitness, id 10 جديد فارغ). المصدر الحقيقي هو id 10. احذف/أرشف id 9.
+7. **النطاقات الفرعية `{slug}.fitpro.hftv.qzz.io`** لم تُنفَّذ على Dokku بعد (قيد التخطيط) — لا تعتمد على آليتها القديمة (Traefik dynamic)؛ تُضاف لاحقاً كآلية تحديث domains per-gym
+8. **الـ volume الدائم**: `STATIC_ROOT=/data/static` و`MEDIA_ROOT=/data/media` على مسار الخادم `/var/lib/dokku/data/storage/fitpro-data/` — لا تُغيّر هذه القيم وإلا فُقدت المرفوعات/الستاتيك مع كل نشر
 
 ## 🔑 بيانات الدخول الحية
 
 | الدور | البريد | كلمة المرور |
 |-------|--------|--------------|
-| إدارة المنصة | flixnettv@gmail.com | #Flix1571980 |
-| مدير صالة (ديمو) | manager@fitpro.hftv.qzz.io | Manager2026! |
-| مدرب | trainer@fitpro.hftv.qzz.io | Trainer2026! |
-| مدربة مستقلة | coach.sara@fitpro.hftv.qzz.io | Trainer2026! |
-| متدربون | client1..5@fitpro.hftv.qzz.io | Client2026! |
+| إدارة المنصة (owner) | flixnettv@gmail.com | #Flix1571980 |
+
+> ملاحظة: حسابات الديمو (مدير صالة/مدرب/مدربة/متدربون) كانت بياناتاً في قاعدة البيانات القديمة — **ليست جزءاً من الكود**. أُنشئت قاعدة جديدة نظيفة (Postgres عبر Dokku، `fitpro-db`)؛ تُعاد إنشاء هذه الحسابات من اللوحة بعد إنشاء أول صالة.
 
 ## 🌐 النطاقات
 
-- `fitpro.hftv.qzz.io` — بوابة إدارة المنصة (الوحيدة بمبدّل الصالات والتسويق)
-- `{slug}.fitpro.hftv.qzz.io` — تطبيق مستقل لكل حساب بشاشة دخول مغلقة بهويته
-- `/pwa/` تطبيق Flutter · `/pair/` صفحة إقران الأجهزة · `/api/v1/` الواجهة الخلفية
+- `fitpro.hftv.qzz.io` — بوابة إدارة المنصة + API (نفس الأصل: `/api/v1/` + `/admin/`) — وذلك لأن الواجهة تستدعي `window.location.origin/api/v1`
+- `{slug}.fitpro.hftv.qzz.io` — تطبيق مستقل لكل صالة بشاشة دخول بهويته — **قيد التطوير على Dokku** (خطوة لاحقة)
+- `/pwa/` تطبيق Flutter · `/pair/` صفحة إقران الأجهزة · `/health/`·`/ready/` فحص الصحة · `/static/`·`/media/` من الـ volume الدائم
 
-## 🚀 النشر الحصري عبر Coolify
+## 🚀 النشر عبر Dokku (المسار الحصري)
 
-- **ممنوع** `docker cp` اليدوي الدائم أو `scp build` كمسار نشر نهائي — هو فقط للطوارئ/المعاينة
-- **المسار المعتمد**: تعديل في `/home/flix/fitpro-center` → `git add` → `git commit` → `git push origin main` → Coolify يبني وينشر تلقائياً (Dockerfile.backend)
-- التحقق بعد النشر: `curl https://fitpro.hftv.qzz.io/api/v1/gyms/branding/` + متصفح
+- **المسار المعتمد**: تعديل في الريبو → `git add` → `git commit` → `git push origin main` → GitHub (المصدر الحقيقي) + `git push dokku main` يعيد بناء التطبيق تلقائياً عبر `Dockerfile`
+- **ممنوع** التعديل المباشر داخل الحاوية أو `docker cp`/`scp build` — الـ image يُبنى من الصفر عند كل دفع
+- متغيرات البيئة لا تُعدَّل عبر الدفع: تُدار بآلية Dokku (`dokku config:set fitpro VAR=val`) وتحتاج إعادة دفع/إعادة نشر لتفعيلها
+- أوامر تشغيلية سريعة (بعد SSH للخادم): `dokku ps:list fitpro` · `dokku logs fitpro -t` · `dokku ps:scale fitpro web=N worker=N` · النسخ احتياطي تلقائي يومي عبر `/root/scripts/backup.sh` (يشمل `fitpro-db` و`fitpro-cache`)
+- التحقق بعد النشر: `curl -sI https://fitpro.hftv.qzz.io/health/` (توقع 200) ثم متصفح على `https://fitpro.hftv.qzz.io`
