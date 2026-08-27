@@ -1,11 +1,15 @@
-import React, { useRef, useState } from "react";
-import { CLIENTS, GOAL_MIX, MEMBERSHIP_LABEL, SESSIONS_WEEK, TRAINERS, WEIGHT_SERIES, fmt, money } from "../data";
+import React, { useEffect, useRef, useState } from "react";
+import { CLIENTS, GOAL_MIX, MEMBERSHIP_LABEL, SESSIONS_WEEK, TRAINERS, fmt, money, type Client } from "../data";
 import { BODY_FONTS, DISPLAY_FONTS, Lang } from "../i18n";
 import { useApp } from "../store";
 import { LangToggle } from "../components/LangToggle";
 import { Avatar, Badge, Bars, Donut, Icon, IconName, Meter, Reveal, SectionTitle, Stars, Stepper, Switch, downloadCsv, useCountUp } from "../components/ui";
 import AppearanceEditor from "../components/AppearanceEditor";
-import { fetchMyAppearance, updateMyAppearance } from "../lib/api";
+import {
+  fetchMyAppearance, updateMyAppearance, createMember, updateMember, archiveMember,
+  fetchGymStats, createTrainerAdmin, fetchMySettings, updateMySettings,
+  type GymStats, type CreateMemberPayload, type MyAppearance,
+} from "../lib/api";
 
 const useL = () => {
   const { lang } = useApp();
@@ -15,14 +19,23 @@ const useL = () => {
 /* ================= overview ================= */
 function Overview() {
   const { gym, t } = useApp();
-  const sessions = useCountUp(SESSIONS_WEEK.reduce((s, d) => s + d.v, 0), 1300);
-  const liveMembers = CLIENTS.length || gym.members;
-  const liveTrainers = TRAINERS.filter((x) => x.active).length || gym.trainersCount;
+  const [stats, setStats] = useState<GymStats | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetchGymStats().then((s) => { if (alive) setStats(s); }).catch(() => { /* keep mocks */ });
+    return () => { alive = false; };
+  }, []);
+  const revenue = money(stats?.totalRevenue ?? gym.mrr);
+  const membersCount = stats?.totalMembers ?? CLIENTS.length;
+  const trainersCount = stats?.totalTrainers ?? TRAINERS.filter((x) => x.active).length;
+  const liveMembers = membersCount || gym.members;
+  const liveTrainers = trainersCount || gym.trainersCount;
+  const sessionsV = useCountUp(SESSIONS_WEEK.reduce((s, d) => s + d.v, 0), 1300);
   const kpis = [
-    { icon: "users" as IconName, label: t("kpi.members"), v: fmt(liveMembers), d: `${CLIENTS.length ? "مباشر ✓" : `▲ ${gym.growth}%`}`, up: true },
-    { icon: "dumbbell" as IconName, label: t("kpi.trainers"), v: String(liveTrainers), d: TRAINERS.length ? "مباشر ✓" : "▲ 2", up: true },
-    { icon: "bolt" as IconName, label: t("kpi.sessionsWeek"), v: fmt(sessions), d: "▲ 6.4%", up: true },
-    { icon: "chart" as IconName, label: "MRR", v: money(gym.mrr), d: `▲ ${gym.growth}%`, up: true },
+    { icon: "users" as IconName, label: t("kpi.members"), v: fmt(liveMembers), d: stats ? `نشط ${stats.activeSubscriptions}` : `▲ ${gym.growth}%`, up: true },
+    { icon: "dumbbell" as IconName, label: t("kpi.trainers"), v: String(liveTrainers), d: stats ? `جدد هذا الشهر ${stats.newThisMonth}` : "▲ 2", up: true },
+    { icon: "bolt" as IconName, label: "جلسات الأسبوع", v: stats ? fmt(stats.expiringThisMonth) : fmt(sessionsV), d: "تنتهي هذا الشهر", up: true },
+    { icon: "chart" as IconName, label: "الإيرادات", v: revenue, d: stats ? "إجمالي رسوم الأعضاء" : `▲ ${gym.growth}%`, up: true },
   ];
   return (
     <div className="grid gap-5">
@@ -35,7 +48,7 @@ function Overview() {
                 <span className="w-8 h-8 rounded-xl grid place-items-center bg-[var(--brand-soft)] text-[var(--brand)] border border-[var(--brand-line)]"><Icon name={k.icon} className="w-4 h-4" /></span>
               </div>
               <div className="font-display font-extrabold text-[24px] text-snow mt-2">{k.v}</div>
-              <div className={`text-[10px] font-bold mt-1 ${k.up ? "text-mint" : "text-blush"}`}>{k.d} {t("common.vsLastWeek")}</div>
+              <div className={`text-[10px] font-bold mt-1 ${k.up ? "text-mint" : "text-blush"}`}>{k.d}</div>
             </div>
           </Reveal>
         ))}
@@ -44,15 +57,26 @@ function Overview() {
       <div className="grid lg:grid-cols-[1.5fr_1fr] gap-5">
         <Reveal delay={80}>
           <div className="glass p-5">
-            <SectionTitle icon="bars" title={t("kpi.sessionsWeek")} sub={`${gym.nameAr} — ${t("common.live")}`} action={<Badge tone="brand">{t("kpi.retention")} {gym.retention}%</Badge>} />
-            <Bars data={SESSIONS_WEEK} h={180} />
+            <SectionTitle icon="bars" title={t("kpi.sessionsWeek")} sub={`${gym.nameAr} — ${t("common.live")}`} action={<Badge tone="brand">{stats ? `إيرادات ${currencyLbl} ${fmt(stats.totalRevenue)}` : `${t("kpi.retention")} ${gym.retention}%`}</Badge>} />
+            {stats ? (
+              <div className="grid grid-cols-3 gap-3 mt-2">
+                {[["أعضاء نشطون", stats.activeSubscriptions], ["منتهيون", stats.expiredMembers], ["قيد الانتهاء", stats.expiringThisMonth]].map(([k, v]) => (
+                  <div key={k as string} className="chip rounded-2xl p-4 text-center">
+                    <div className="font-display font-extrabold text-2xl text-snow">{fmt(v as number)}</div>
+                    <div className="text-[10px] text-moss mt-1">{k}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Bars data={SESSIONS_WEEK} h={180} />
+            )}
           </div>
         </Reveal>
         <Reveal delay={140}>
           <div className="glass p-5 h-full flex flex-col">
             <SectionTitle icon="target" title="أهداف الأعضاء" sub="توزيع حسب الهدف التدريبي" />
             <div className="flex items-center justify-center gap-6 flex-1 flex-wrap">
-              <Donut center={fmt(gym.members)} sub="عضو" segments={GOAL_MIX} />
+              <Donut center={fmt(liveMembers)} sub="عضو" segments={GOAL_MIX} />
               <div className="space-y-2.5">
                 {GOAL_MIX.map((s) => (
                   <div key={s.label} className="flex items-center gap-2 text-xs">
@@ -92,16 +116,44 @@ function Overview() {
   );
 }
 
+const currencyLbl = "ج.م";
+
 /* ================= trainers ================= */
 function Trainers() {
   const { toast, t } = useApp();
+  const L = useL();
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ email: "", password: "", first_name: "", last_name: "", phone: "", employee_id: "", specialization: "", hourly_rate: "" });
+  const submit = async () => {
+    if (!form.email.trim()) { toast(L({ ar: "البريد مطلوب", en: "Email is required" }), "blush"); return; }
+    if (!form.first_name.trim()) { toast(L({ ar: "الاسم مطلوب", en: "Name is required" }), "blush"); return; }
+    setBusy(true);
+    try {
+      await createTrainerAdmin({
+        email: form.email.trim().toLowerCase(),
+        password: form.password || undefined,
+        first_name: form.first_name.trim(),
+        last_name: form.last_name.trim(),
+        phone: form.phone,
+        employee_id: form.employee_id || undefined,
+        specialization: form.specialization.split(/[،,\n]+/).map((s) => s.trim()).filter(Boolean),
+        hourly_rate: form.hourly_rate ? parseFloat(form.hourly_rate) : undefined,
+      });
+      toast(L({ ar: "أُنشئ حساب المدرب وسجّل دخوله بالبريد وكلمة المرور", en: "Trainer account created — they log in with email & password" }), "mint");
+      setAdding(false);
+      import("../lib/api").then((m) => m.syncRealData()).catch(() => window.location.reload());
+    } catch (e) {
+      toast(e instanceof Error && (e.message === "400" || e.message === "409") ? L({ ar: "البريد مستخدم مسبقاً أو بيانات ناقصة", en: "Email already in use or missing data" }) : L({ ar: "فشل الإنشاء", en: "Failed" }), "blush");
+    } finally { setBusy(false); }
+  };
   return (
     <div className="grid gap-5">
       <Reveal>
         <div className="glass p-4 flex items-center gap-3 flex-wrap">
           <div className="flex-1 min-w-[220px] text-xs text-moss">{TRAINERS.length} مدرباً (حقيقي) · متوسط التقييم <b className="text-[var(--brand)] font-display">4.8 ★</b></div>
-          <button onClick={() => toast("أُرسلت دعوة مدرب جديد إلى البريد — تُفعَّل بعد قبوله", "mint")} className="btn-brand rounded-xl px-4 py-2.5 text-xs font-bold flex items-center gap-2">
-            <Icon name="userPlus" className="w-4 h-4" /> دعوة مدرب
+          <button onClick={() => setAdding(true)} className="btn-brand rounded-xl px-4 py-2.5 text-xs font-bold flex items-center gap-2">
+            <Icon name="userPlus" className="w-4 h-4" /> إضافة مدرب
           </button>
         </div>
       </Reveal>
@@ -124,7 +176,7 @@ function Trainers() {
                 <Stars rating={tr.rating} />
               </div>
               <div className="grid grid-cols-3 gap-2.5 mt-4 text-center">
-                {[["عملاء", `${tr.clients}/${tr.maxClients}`], ["جلسات/شهر", String(tr.sessionsMonth)], ["الأجر/ساعة", `${tr.rate} ر.س`]].map(([k, v]) => (
+                {[["عملاء", `${tr.clients}/${tr.maxClients}`], ["جلسات/شهر", String(tr.sessionsMonth)], ["الأجر/ساعة", `${tr.rate} جنيه`]].map(([k, v]) => (
                   <div key={k} className="chip rounded-xl py-2">
                     <div className="text-[9px] text-moss2">{k}</div>
                     <div className="font-display font-bold text-[13px] text-snow mt-0.5">{v}</div>
@@ -138,15 +190,233 @@ function Trainers() {
           </Reveal>
         ))}
       </div>
+      {adding && (
+        <div className="fixed inset-0 z-50 grid place-items-center p-4 overflow-y-auto">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setAdding(false)} />
+          <div className="relative w-full max-w-md glass sheen rounded-3xl p-5 anim-pop">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display font-bold text-snow text-base">{L({ ar: "إضافة مدرب", en: "Add trainer" })}</h3>
+              <button onClick={() => setAdding(false)} className="w-8 h-8 rounded-xl chip grid place-items-center text-moss hover:text-snow"><Icon name="logout" className="w-4 h-4" /></button>
+            </div>
+            <div className="grid gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "الاسم الأول", en: "First name" })} *</span>
+                  <input value={form.first_name} onChange={(e) => setForm((s) => ({ ...s, first_name: e.target.value }))} className={inputCls} />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "اسم العائلة", en: "Last name" })}</span>
+                  <input value={form.last_name} onChange={(e) => setForm((s) => ({ ...s, last_name: e.target.value }))} className={inputCls} />
+                </label>
+              </div>
+              <label className="block">
+                <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "البريد", en: "Email" })} *</span>
+                <input dir="ltr" value={form.email} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} placeholder="trainer@mail.com" className={inputCls} />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "كلمة المرور", en: "Password" })}</span>
+                  <input dir="ltr" type="text" value={form.password} onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))} placeholder="Trainer2026!" className={inputCls} />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "الهاتف", en: "Phone" })}</span>
+                  <input dir="ltr" value={form.phone} onChange={(e) => setForm((s) => ({ ...s, phone: e.target.value }))} className={inputCls} />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "رقم الموظف", en: "Employee ID" })}</span>
+                  <input dir="ltr" value={form.employee_id} onChange={(e) => setForm((s) => ({ ...s, employee_id: e.target.value }))} placeholder="TR-0001" className={inputCls} />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "الأجر/ساعة", en: "Hourly rate" })}</span>
+                  <input dir="ltr" type="number" min={0} value={form.hourly_rate} onChange={(e) => setForm((s) => ({ ...s, hourly_rate: e.target.value }))} className={inputCls} />
+                </label>
+              </div>
+              <label className="block">
+                <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "التخصصات (افصلها بفاصلة)", en: "Specializations (comma separated)" })}</span>
+                <input value={form.specialization} onChange={(e) => setForm((s) => ({ ...s, specialization: e.target.value }))} placeholder={L({ ar: "قوة، تضخيم، تخسيس", en: "Strength, Hypertrophy, Fat loss" })} className={inputCls} />
+              </label>
+            </div>
+            <button onClick={submit} disabled={busy} className="btn-brand w-full rounded-xl py-2.5 text-xs font-bold mt-5 flex items-center justify-center gap-2 disabled:opacity-60">
+              {busy ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="w-4 h-4 anim-spin"><path d="M12 3a9 9 0 1 0 9 9" /></svg> : <Icon name="check" className="w-4 h-4" />}
+              {L({ ar: "إنشاء حساب المدرب", en: "Create trainer account" })}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ================= members ================= */
+const MEMBERSHIP_TYPES = [["vip", "VIP"], ["premium", "بريميوم"], ["basic", "أساسية"], ["trial", "تجريبية"]] as const;
+const GOAL_PRESETS = ["تضخيم", "قوة", "تخسيس", "لياقة عامة", "تحمل", "تأهيل", "كروس فت"];
+
+function MemberForm({
+  initial, onDone, onCancel,
+}: {
+  initial?: { id: string; name: string; email?: string; phone?: string; membership: Client["membership"]; start?: string; end: string; fee?: number; trainerId?: string; goals: string[] };
+  onDone: () => void; onCancel: () => void;
+}) {
+  const { toast } = useApp();
+  const L = useL();
+  const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState(initial?.email ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [phone, setPhone] = useState(initial?.phone ?? "");
+  const [password, setPassword] = useState("");
+  const [membership, setMembership] = useState<Client["membership"]>(initial?.membership ?? "basic");
+  const [fee, setFee] = useState(initial?.fee != null ? String(initial.fee) : "");
+  const [start, setStart] = useState(initial?.start ?? new Date().toISOString().slice(0, 10));
+  const [end, setEnd] = useState(initial?.end ?? "");
+  const [trainerId, setTrainerId] = useState(initial?.trainerId ?? "");
+  const [goals, setGoals] = useState<string[]>(initial?.goals ?? []);
+
+  const trainers = TRAINERS.filter((t) => t.active);
+  const toggleGoal = (g: string) => setGoals((gs) => (gs.includes(g) ? gs.filter((x) => x !== g) : [...gs, g]));
+
+  const submit = async () => {
+    if (!initial && !email.trim()) { toast(L({ ar: "البريد مطلوب", en: "Email is required" }), "blush"); return; }
+    if (!name.trim()) { toast(L({ ar: "الاسم مطلوب", en: "Name is required" }), "blush"); return; }
+    setBusy(true);
+    const payload: CreateMemberPayload = {
+      email: email.trim().toLowerCase(), name: name.trim(), phone,
+      membership_type: membership, goals,
+      membership_fee: fee ? parseFloat(fee) : 0,
+      membership_start: start, membership_end: end || undefined,
+      trainer_id: trainerId || undefined,
+    };
+    if (!initial && password.trim()) payload.password = password;
+    try {
+      if (initial) {
+        await updateMember(initial.id, {
+          membership_type: membership,
+          membership_fee: fee ? parseFloat(fee) : 0,
+          membership_start: start, membership_end: end || undefined,
+          trainer_id: trainerId || null, goals,
+        });
+        toast(L({ ar: "حُدّث ملف العضو بنجاح", en: "Member profile updated" }), "mint");
+      } else {
+        await createMember(payload);
+        toast(L({ ar: "أُضيف العضو وأنشئ حسابه — سجّل دخوله بالبريد وكلمة المرور", en: "Member added & account created — they log in with the email & password" }), "mint");
+      }
+      onDone();
+    } catch (e) {
+      toast(e instanceof Error ? (e.message === "400" || e.message === "409" ? L({ ar: "البريد مستخدم مسبقاً أو بيانات ناقصة", en: "Email already in use or missing data" }) : e.message) : L({ ar: "فشل الحفظ", en: "Save failed" }), "blush");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const archive = async () => {
+    if (!initial) return;
+    setBusy(true);
+    try {
+      await archiveMember(initial.id);
+      toast(L({ ar: "أُوقف العضو — يبقى سجلّه محفوظاً", en: "Member deactivated — history kept" }), "ember");
+      onDone();
+    } catch {
+      toast(L({ ar: "فشل الحذف", en: "Failed" }), "blush");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4 overflow-y-auto">
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={cancelClk(onCancel)} />
+      <div className="relative w-full max-w-lg glass sheen rounded-3xl p-5 anim-pop">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-display font-bold text-snow text-base">{initial ? L({ ar: "تعديل العضو", en: "Edit member" }) : L({ ar: "إضافة عضو جديد", en: "Add new member" })}</h3>
+          <button onClick={onCancel} className="w-8 h-8 rounded-xl chip grid place-items-center text-moss hover:text-snow"><Icon name="logout" className="w-4 h-4" /></button>
+        </div>
+        <div className="grid gap-3">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "الاسم الكامل", en: "Full name" })} *</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "البريد", en: "Email" })} {initial ? "" : "*"}</span>
+              <input dir="ltr" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user@mail.com" className={inputCls} />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "الهاتف", en: "Phone" })}</span>
+              <input dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold text-moss block mb-1">{initial ? L({ ar: "كلمة المرور (اختياري)", en: "Password (optional)" }) : L({ ar: "كلمة المرور", en: "Password" })}</span>
+              <input dir="ltr" type="text" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Member2026!" className={inputCls} />
+            </label>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "نوع العضوية", en: "Membership" })}</span>
+              <select value={membership} onChange={(e) => setMembership(e.target.value as Client["membership"])} className={inputCls}>
+                {MEMBERSHIP_TYPES.map(([v, l]) => <option key={v} value={v} className="bg-[var(--color-panel)]">{l}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: `الرسوم (${currencyLbl})`, en: `Fee (${currencyLbl})` })}</span>
+              <input dir="ltr" type="number" min={0} value={fee} onChange={(e) => setFee(e.target.value)} placeholder="0" className={inputCls} />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "بداية الاشتراك", en: "Start date" })}</span>
+              <input dir="ltr" type="date" value={start} onChange={(e) => setStart(e.target.value)} className={inputCls} />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "نهاية الاشتراك", en: "End date" })}</span>
+              <input dir="ltr" type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
+            </label>
+          </div>
+          <label className="block">
+            <span className="text-[10px] font-bold text-moss block mb-1">{L({ ar: "المدرب", en: "Trainer" })}</span>
+            <select value={trainerId} onChange={(e) => setTrainerId(e.target.value)} className={inputCls}>
+              <option value="" className="bg-[var(--color-panel)]">{L({ ar: "بدون مدرب", en: "No trainer" })}</option>
+              {trainers.map((t) => <option key={t.id} value={t.id} className="bg-[var(--color-panel)]">{t.name}</option>)}
+            </select>
+          </label>
+          <div>
+            <span className="text-[10px] font-bold text-moss block mb-1.5">{L({ ar: "الأهداف", en: "Goals" })}</span>
+            <div className="flex gap-1.5 flex-wrap">
+              {GOAL_PRESETS.map((g) => (
+                <button key={g} type="button" onClick={() => toggleGoal(g)} className={`px-2.5 py-1 rounded-lg border text-[9px] font-bold transition-all ${goals.includes(g) ? "tab-active" : "border-[var(--glass-border)] text-moss2"}`}>
+                  {goals.includes(g) ? "✓ " : ""}{g}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2 mt-5">
+          <button onClick={submit} disabled={busy} className="btn-brand flex-1 rounded-xl py-2.5 text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-60">
+            {busy ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="w-4 h-4 anim-spin"><path d="M12 3a9 9 0 1 0 9 9" /></svg> : <Icon name="check" className="w-4 h-4" />}
+            {L({ ar: initial ? "حفظ التعديلات" : "إضافة العضو", en: initial ? "Save changes" : "Add member" })}
+          </button>
+          {initial && (
+            <button onClick={archive} disabled={busy} className="rounded-xl px-4 py-2.5 text-[11px] font-bold bg-blush/15 border border-blush/40 text-blush disabled:opacity-50">
+              {L({ ar: "إيقاف", en: "Deactivate" })}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function cancelClk(onCancel: () => void) {
+  return () => onCancel();
+}
+
 function Members() {
   const { toast, t } = useApp();
+  const L = useL();
   const [f, setF] = useState<"all" | "vip" | "premium" | "basic" | "trial">("all");
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const list = CLIENTS.filter((c) => f === "all" || c.membership === f);
+  const editingMember = editing ? CLIENTS.find((c) => c.id === editing) ?? null : null;
+  const refreshAndClose = () => {
+    setAdding(false);
+    setEditing(null);
+    import("../lib/api").then((m) => m.syncRealData()).catch(() => window.location.reload());
+  };
   return (
     <div className="grid gap-5">
       <Reveal>
@@ -155,35 +425,43 @@ function Members() {
             <button key={k} onClick={() => setF(k)} className={`px-3.5 py-2 rounded-xl border text-[11px] font-bold transition-all ${f === k ? "tab-active" : "border-[var(--glass-border)] text-moss hover:text-snow"}`}>{l}</button>
           ))}
           <div className="ms-auto flex gap-2">
-            <button onClick={() => toast("فُتح نموذج إضافة عضو يدوي", "mint")} className="btn-brand rounded-xl px-4 py-2 text-[11px] font-bold flex items-center gap-2"><Icon name="userPlus" className="w-4 h-4" /> إضافة عضو</button>
-            <button onClick={() => toast("جهّز ملف CSV — سيُستورد مع إنشاء حسابات تلقائياً", "sky")} className="btn-ghost rounded-xl px-4 py-2 text-[11px] font-bold text-moss">استيراد CSV</button>
+            <button onClick={() => setAdding(true)} className="btn-brand rounded-xl px-4 py-2 text-[11px] font-bold flex items-center gap-2"><Icon name="userPlus" className="w-4 h-4" /> إضافة عضو</button>
+            <button onClick={() => toast(L({ ar: "التصدير من قسم «البيانات والنسخ» في الإعدادات", en: "Export lives in Settings → Data & backup" }), "sky")} className="btn-ghost rounded-xl px-4 py-2 text-[11px] font-bold text-moss">استيراد CSV</button>
           </div>
         </div>
       </Reveal>
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {list.map((c, i) => (
-          <Reveal key={c.id} delay={i * 50}>
-            <div className="glass panel-hover p-4">
-              <div className="flex items-center gap-3">
-                <Avatar name={c.name} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-bold text-snow truncate">{c.name}</div>
-                  <div className="text-[10px] text-moss2 mt-0.5">عضو حتى <span dir="ltr">{c.membershipEnd}</span></div>
+        {list.map((c) => {
+          const m = c as Client & { membershipStart?: string; membershipFee?: number; email?: string; phone?: string };
+          return (
+            <Reveal key={c.id} delay={50}>
+              <button onClick={() => setEditing(c.id)} className="text-right block w-full glass panel-hover p-4 hover:border-[var(--brand-line)] transition-colors">
+                <div className="flex items-center gap-3">
+                  <Avatar name={c.name} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-snow truncate">{c.name}</div>
+                    <div className="text-[10px] text-moss2 mt-0.5">عضو حتى <span dir="ltr">{c.membershipEnd}</span></div>
+                  </div>
+                  <Badge tone={c.membership === "vip" ? "ember" : c.membership === "premium" ? "brand" : "moss"}>{MEMBERSHIP_LABEL[c.membership]}</Badge>
                 </div>
-                <Badge tone={c.membership === "vip" ? "ember" : c.membership === "premium" ? "brand" : "moss"}>{MEMBERSHIP_LABEL[c.membership]}</Badge>
-              </div>
-              <div className="flex items-center gap-2 mt-3">
-                <span className="text-[10px] text-moss w-14 shrink-0">التزام {c.adherence}%</span>
-                <Meter pct={c.adherence} color={c.adherence >= 85 ? "var(--brand)" : "#FF8A3C"} />
-              </div>
-              <div className="flex items-center justify-between mt-2.5 text-[10px] text-moss">
-                <span>🎯 {c.goals.join(" · ")}</span>
-                <span className="flex items-center gap-1">{c.streak > 0 && <span className="text-ember font-bold">🔥{c.streak}</span>} <span>{c.weight} كغ</span></span>
-              </div>
-            </div>
-          </Reveal>
-        ))}
+                {(m.membershipFee != null && m.membershipFee > 0) && (
+                  <div className="text-[10px] text-moss mt-2">رسوم: <b className="text-[var(--brand)] font-display">{m.membershipFee} {currencyLbl}</b> · اشتراك يبدأ <span dir="ltr">{m.membershipStart || "—"}</span></div>
+                )}
+                <div className="flex items-center gap-2 mt-2.5">
+                  <span className="text-[10px] text-moss w-14 shrink-0">التزام {c.adherence}%</span>
+                  <Meter pct={c.adherence} color={c.adherence >= 85 ? "var(--brand)" : "#FF8A3C"} />
+                </div>
+                <div className="flex items-center justify-between mt-2.5 text-[10px] text-moss">
+                  <span>🎯 {c.goals.join(" · ")}</span>
+                  <span className="flex items-center gap-1"><span className="text-mint">✎</span> تعديل</span>
+                </div>
+              </button>
+            </Reveal>
+          );
+        })}
       </div>
+      {adding && <MemberForm onDone={refreshAndClose} onCancel={() => setAdding(false)} />}
+      {editingMember && <MemberForm initial={{ id: editingMember.id, name: editingMember.name, email: (editingMember as never as { email?: string }).email ?? "", phone: (editingMember as never as { phone?: string }).phone ?? "", membership: editingMember.membership, start: (editingMember as never as { membershipStart?: string }).membershipStart ?? "", end: editingMember.membershipEnd, fee: (editingMember as never as { membershipFee?: number }).membershipFee, trainerId: editingMember.trainerId, goals: editingMember.goals }} onDone={refreshAndClose} onCancel={() => setEditing(null)} />}
     </div>
   );
 }
@@ -517,12 +795,12 @@ function Devices() {
 
       <Reveal delay={120}>
         <div className="glass p-5">
-          <SectionTitle icon="heart" title={t("dev.memberDevices")} sub="ساعات وأساور وموازين ذكية ربطها الأعضاء بحساباتهم" />
+          <SectionTitle icon="heart" title={t("dev.memberDevices")} sub="أجهزة الأعضاء المتصلة — تُربط من تطبيق العميل (إحصائيات مجمّعة قريباً)" />
           <div className="grid sm:grid-cols-3 gap-4">
             {[
-              { k: "ساعة/سوار مرتبط", v: "212", icon: "heart" as IconName, tone: "var(--brand)" },
-              { k: "مزامنة اليوم", v: "1,847", icon: "bolt" as IconName, tone: "#FF8A3C" },
-              { k: "قياسات ميزان هذا الأسبوع", v: "96", icon: "target" as IconName, tone: "#45D6C0" },
+              { k: "أعضاء الصالة", v: String(CLIENTS.length || 0), icon: "users" as IconName, tone: "var(--brand)" },
+              { k: "أجهزة مربوطة", v: "—", icon: "heart" as IconName, tone: "#FF8A3C" },
+              { k: "قياسات ميزان اليوم", v: "قريباً", icon: "target" as IconName, tone: "#45D6C0" },
             ].map((x) => (
               <div key={x.k} className="chip rounded-2xl p-4 flex items-center gap-3.5">
                 <span className="w-11 h-11 rounded-xl grid place-items-center" style={{ background: `color-mix(in srgb, ${x.tone} 12%, transparent)`, color: x.tone, border: `1px solid color-mix(in srgb, ${x.tone} 35%, transparent)` }}>
@@ -546,21 +824,42 @@ const inputCls = "w-full chip rounded-xl px-3 py-2.5 text-xs text-snow outline-n
 
 function GeneralSection() {
   const L = useL();
-  const { gym, toast } = useApp();
-  const slug = gym.nameEn.toLowerCase().replace(/[^a-z]+/g, "");
-  const [info, setInfo] = useState({ city: gym.city, address: "حي العليا، شارع التخصصي", phone: "+966 55 210 8890", email: `hello@${slug}.sa` });
-  const DAYS = [
-    { ar: "السبت", en: "Sat" }, { ar: "الأحد", en: "Sun" }, { ar: "الاثنين", en: "Mon" }, { ar: "الثلاثاء", en: "Tue" },
-    { ar: "الأربعاء", en: "Wed" }, { ar: "الخميس", en: "Thu" }, { ar: "الجمعة", en: "Fri" },
-  ];
-  const [days, setDays] = useState([true, true, true, true, true, true, false]);
-  const [hours, setHours] = useState({ open: "06:00", close: "23:30" });
-  const [tz, setTz] = useState("GMT+3");
-  const [currency, setCurrency] = useState("SAR");
-  const [weekStart, setWeekStart] = useState<"sat" | "mon">("sat");
-  const saveLbl = L({ ar: "حفظ الإعدادات العامة", en: "Save general settings" });
+  const { toast } = useApp();
+  const [info, setInfo] = useState({ city: "", address: "", phone: "", email: "", currency: "EGP" });
+  const DAYS = ["saturday", "sunday", "monday", "tuesday", "wednesday", "thursday", "friday"];
+  const DAY_AR: Record<string, string> = { saturday: "السبت", sunday: "الأحد", monday: "الاثنين", tuesday: "الثلاثاء", wednesday: "الأربعاء", thursday: "الخميس", friday: "الجمعة" };
+  const [opening, setOpening] = useState<Record<string, { enabled: boolean; open: string; close: string }>>(
+    () => Object.fromEntries(DAYS.map((d) => [d, { enabled: true, open: "06:00", close: "23:30" }])),
+  );
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    fetchMySettings().then((s) => {
+      setInfo({ city: s.city || "", address: s.address || "", phone: s.contact_phone || "", email: s.contact_email || "", currency: s.currency || "EGP" });
+      const oh = s.opening_hours as Record<string, { enabled?: boolean; open?: string; close?: string }> | undefined;
+      if (oh) {
+        setOpening(Object.fromEntries(DAYS.map((d) => [d, { enabled: oh[d]?.enabled !== false, open: oh[d]?.open || "06:00", close: oh[d]?.close || "23:30" }])));
+      }
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []);
+  const save = async () => {
+    setSaving(true);
+    try {
+      await updateMySettings({
+        city: info.city, address: info.address,
+        contact_phone: info.phone, contact_email: info.email,
+        currency: info.currency,
+        opening_hours: opening as unknown as Record<string, unknown>,
+      });
+      toast(L({ ar: "حُفظت الإعدادات العامة وطُبّقت فوراً ✓", en: "General settings saved & applied ✓" }), "mint");
+    } catch {
+      toast(L({ ar: "فشل الحفظ — تأكد من صلاحية تحرير الإعدادات", en: "Save failed — check manage_settings permission" }), "blush");
+    } finally { setSaving(false); }
+  };
   return (
     <>
+      {!loaded && <div className="glass p-5 text-xs text-moss">{"جارٍ تحميل الإعدادات…"}</div>}
       <div className="glass p-5">
         <SectionTitle icon="settings" title={L({ ar: "بيانات الصالة", en: "Gym details" })} sub={L({ ar: "تظهر في الفواتير وبوابة الدخول وتطبيق الأعضاء", en: "Shown on invoices, login & the member app" })} />
         <div className="grid sm:grid-cols-2 gap-4">
@@ -580,132 +879,82 @@ function GeneralSection() {
       <div className="glass p-5">
         <SectionTitle icon="clock" title={L({ ar: "ساعات العمل", en: "Opening hours" })} sub={L({ ar: "تُفعَّل بوابات الدخول تلقائياً خارج هذه الأوقات", en: "Entry gates lock automatically outside these hours" })} />
         <div className="flex gap-1.5 flex-wrap mb-4">
-          {DAYS.map((d, i) => (
-            <button key={d.en} onClick={() => setDays((s) => s.map((x, j) => (j === i ? !x : x)))} className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold transition-all ${days[i] ? "tab-active" : "border-[var(--glass-border)] text-moss2 line-through"}`}>
-              {L(d)}
+          {DAYS.map((d) => (
+            <button key={d} onClick={() => setOpening((s) => ({ ...s, [d]: { ...s[d], enabled: !s[d].enabled } }))} className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold transition-all ${opening[d].enabled ? "tab-active" : "border-[var(--glass-border)] text-moss2 line-through"}`}>
+              {DAY_AR[d]}
             </button>
           ))}
         </div>
-        <div className="grid sm:grid-cols-3 gap-4">
+        <div className="grid sm:grid-cols-2 gap-4">
           <label className="block">
             <span className="text-[11px] font-bold text-moss block mb-1.5">{L({ ar: "يفتح", en: "Opens" })}</span>
-            <input type="time" dir="ltr" value={hours.open} onChange={(e) => setHours((s) => ({ ...s, open: e.target.value }))} className={inputCls} />
+            <input type="time" dir="ltr" value={opening.monday.open} onChange={(e) => setOpening((s) => ({ ...s, monday: { ...s.monday, open: e.target.value } }))} className={inputCls} />
           </label>
           <label className="block">
             <span className="text-[11px] font-bold text-moss block mb-1.5">{L({ ar: "يغلق", en: "Closes" })}</span>
-            <input type="time" dir="ltr" value={hours.close} onChange={(e) => setHours((s) => ({ ...s, close: e.target.value }))} className={inputCls} />
-          </label>
-          <label className="block">
-            <span className="text-[11px] font-bold text-moss block mb-1.5">{L({ ar: "المنطقة الزمنية", en: "Timezone" })}</span>
-            <select value={tz} onChange={(e) => setTz(e.target.value)} className={inputCls}>
-              {["GMT+3", "GMT+4", "GMT+0", "GMT+1"].map((z) => <option key={z} value={z} className="bg-[var(--color-panel)]">{z}</option>)}
-            </select>
+            <input type="time" dir="ltr" value={opening.monday.close} onChange={(e) => setOpening((s) => ({ ...s, monday: { ...s.monday, close: e.target.value } }))} className={inputCls} />
           </label>
         </div>
       </div>
       <div className="glass p-5">
-        <SectionTitle icon="grid" title={L({ ar: "المحلية والفوترة", en: "Locale & billing" })} sub={L({ ar: "العملة وبداية الأسبوع لكل التقارير", en: "Currency & week start across all reports" })} />
-        <div className="grid sm:grid-cols-3 gap-4 items-end">
+        <SectionTitle icon="grid" title={L({ ar: "المحلية والفوترة", en: "Locale & billing" })} sub={L({ ar: "عملة الفواتير والتقارير", en: "Invoice & report currency" })} />
+        <div className="grid sm:grid-cols-2 gap-4 items-end">
           <label className="block">
             <span className="text-[11px] font-bold text-moss block mb-1.5">{L({ ar: "العملة", en: "Currency" })}</span>
-            <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
-              {[["SAR", "ر.س"], ["USD", "$"], ["AED", "د.إ"], ["EUR", "€"]].map(([c, s]) => <option key={c} value={c} className="bg-[var(--color-panel)]">{c} — {s}</option>)}
+            <select value={info.currency} onChange={(e) => setInfo((s) => ({ ...s, currency: e.target.value }))} className={inputCls}>
+              {[["EGP", "ج.م"], ["USD", "$"], ["EUR", "€"], ["AED", "د.إ"]].map(([c, s]) => <option key={c} value={c} className="bg-[var(--color-panel)]">{c} — {s}</option>)}
             </select>
           </label>
-          <div>
-            <span className="text-[11px] font-bold text-moss block mb-1.5">{L({ ar: "بداية الأسبوع", en: "Week starts on" })}</span>
-            <div className="flex gap-2">
-              {([["sat", { ar: "السبت", en: "Saturday" }], ["mon", { ar: "الاثنين", en: "Monday" }]] as const).map(([v, l]) => (
-                <button key={v} onClick={() => setWeekStart(v)} className={`flex-1 rounded-xl border py-2.5 text-[11px] font-bold transition-all ${weekStart === v ? "tab-active" : "border-[var(--glass-border)] text-moss"}`}>{L(l)}</button>
-              ))}
-            </div>
-          </div>
-          <button onClick={() => toast(L({ ar: "حُفظت الإعدادات العامة وطُبّقت فوراً", en: "General settings saved & applied" }), "brand")} className="btn-brand rounded-xl px-5 py-2.5 text-xs font-bold flex items-center justify-center gap-2">
-            <Icon name="check" className="w-4 h-4" /> {saveLbl}
-          </button>
         </div>
       </div>
+      <button onClick={save} disabled={saving} className="btn-brand rounded-xl px-6 py-3 text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-60">
+        {saving ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="w-4 h-4 anim-spin"><path d="M12 3a9 9 0 1 0 9 9" /></svg> : <Icon name="check" className="w-4 h-4" />}
+        {L({ ar: "حفظ الإعدادات العامة", en: "Save general settings" })}
+      </button>
     </>
   );
 }
 
-interface MemberPlan { id: string; name: { ar: string; en: string }; price: number; cycle: "monthly" | "quarterly" | "yearly"; active: boolean; perks: { pool: boolean; sauna: boolean; pt: boolean; freeze: boolean }; custom?: boolean }
-const PERKS: { key: keyof MemberPlan["perks"]; ar: string; en: string }[] = [
-  { key: "pool", ar: "مسبح", en: "Pool" }, { key: "sauna", ar: "ساونا", en: "Sauna" },
-  { key: "pt", ar: "جلسة PT مجانية", en: "Free PT session" }, { key: "freeze", ar: "تجميد شهري", en: "Monthly freeze" },
-];
-
 function PlansSection() {
   const L = useL();
-  const { toast, lang } = useApp();
-  const [plans, setPlans] = useState<MemberPlan[]>([
-    { id: "basic", name: { ar: "أساسية", en: "Basic" }, price: 149, cycle: "monthly", active: true, perks: { pool: false, sauna: false, pt: false, freeze: false } },
-    { id: "premium", name: { ar: "بريميوم", en: "Premium" }, price: 299, cycle: "monthly", active: true, perks: { pool: true, sauna: true, pt: false, freeze: true } },
-    { id: "vip", name: { ar: "VIP", en: "VIP" }, price: 499, cycle: "quarterly", active: true, perks: { pool: true, sauna: true, pt: true, freeze: true } },
-    { id: "trial", name: { ar: "تجريبية", en: "Trial" }, price: 0, cycle: "monthly", active: true, perks: { pool: false, sauna: false, pt: false, freeze: false } },
-  ]);
-  const CYCLES: Record<MemberPlan["cycle"], { ar: string; en: string }> = {
-    monthly: { ar: "شهري", en: "Monthly" }, quarterly: { ar: "ربع سنوي", en: "Quarterly" }, yearly: { ar: "سنوي", en: "Yearly" },
-  };
+  const { toast } = useApp();
+  const active = CLIENTS;
+  const byType = (["vip", "premium", "basic", "trial"] as const).map((k) => ({ k, label: MEMBERSHIP_LABEL[k], n: active.filter((c) => c.membership === k).length }));
+  const empty = active.length === 0;
   return (
     <>
-      <div className="glass p-4 flex items-center gap-3 flex-wrap">
-        <div className="flex-1 min-w-[200px] text-xs text-moss">
-          {L({ ar: "أسعار العضويات تظهر للأعضاء في شاشة الاشتراك وتُحدّث الفوترة فور الحفظ.", en: "Prices appear to members on the subscribe screen & update billing on save." })}
-        </div>
-        <button
-          onClick={() => { setPlans((p) => [...p, { id: `p${Date.now()}`, name: { ar: "باقة جديدة", en: "New Plan" }, price: 199, cycle: "monthly", active: true, perks: { pool: false, sauna: false, pt: false, freeze: false }, custom: true }]); toast(L({ ar: "أُضيفت باقة — عدّل اسمها وسعرها", en: "Plan added — edit its name & price" }), "mint"); }}
-          className="btn-brand rounded-xl px-4 py-2.5 text-xs font-bold flex items-center gap-2"
-        >
-          <Icon name="plus" className="w-4 h-4" /> {L({ ar: "إضافة باقة", en: "Add plan" })}
-        </button>
-      </div>
-      <div className="grid md:grid-cols-2 gap-4">
-        {plans.map((p) => (
-          <div key={p.id} className={`glass panel-hover p-5 ${!p.active ? "opacity-60" : ""}`}>
-            <div className="flex items-center justify-between mb-3.5">
-              <input value={L(p.name)} onChange={(e) => setPlans((ps) => ps.map((x) => (x.id === p.id ? { ...x, name: { ...x.name, [lang]: e.target.value } } : x)))} className="bg-transparent outline-none font-display font-bold text-snow text-base w-28 border-b border-transparent focus:border-[var(--brand-line)] transition-colors" />
-              <div className="flex items-center gap-2.5">
-                {p.custom && (
-                  <button onClick={() => { setPlans((ps) => ps.filter((x) => x.id !== p.id)); toast(L({ ar: `حُذفت «${p.name.ar}»`, en: `Deleted "${p.name.en}"` }), "ember"); }} className="w-7 h-7 rounded-lg chip grid place-items-center text-moss hover:text-blush hover:!border-blush/50 transition-colors" aria-label="delete">
-                    <Icon name="trash" className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                <Switch on={p.active} onClick={() => setPlans((ps) => ps.map((x) => (x.id === p.id ? { ...x, active: !x.active } : x)))} />
-              </div>
-            </div>
-            <div className="flex items-end gap-3 mb-4">
-              <label className="flex-1">
-                <span className="text-[10px] text-moss block mb-1">{L({ ar: "السعر", en: "Price" })}</span>
-                <span className="flex items-center gap-2">
-                  <input type="number" min={0} value={p.price} onChange={(e) => setPlans((ps) => ps.map((x) => (x.id === p.id ? { ...x, price: Math.max(0, parseInt(e.target.value) || 0) } : x)))} className={`${inputCls} font-display font-bold text-lg`} />
-                  <span className="text-[10px] text-moss2 whitespace-nowrap pb-2.5">ر.س</span>
-                </span>
-              </label>
-              <label className="w-32">
-                <span className="text-[10px] text-moss block mb-1">{L({ ar: "الدورة", en: "Cycle" })}</span>
-                <select value={p.cycle} onChange={(e) => setPlans((ps) => ps.map((x) => (x.id === p.id ? { ...x, cycle: e.target.value as MemberPlan["cycle"] } : x)))} className={inputCls}>
-                  {(Object.keys(CYCLES) as MemberPlan["cycle"][]).map((c) => <option key={c} value={c} className="bg-[var(--color-panel)]">{L(CYCLES[c])}</option>)}
-                </select>
-              </label>
-            </div>
-            <div className="flex gap-1.5 flex-wrap">
-              {PERKS.map((pk) => (
-                <button
-                  key={pk.key}
-                  onClick={() => setPlans((ps) => ps.map((x) => (x.id === p.id ? { ...x, perks: { ...x.perks, [pk.key]: !x.perks[pk.key] } } : x)))}
-                  className={`px-2.5 py-1 rounded-lg border text-[9px] font-bold transition-all ${p.perks[pk.key] ? "tab-active" : "border-[var(--glass-border)] text-moss2"}`}
-                >
-                  {p.perks[pk.key] ? "✓ " : ""}{L(pk)}
-                </button>
+      <div className="glass p-5">
+        <SectionTitle icon="star" title={L({ ar: "العضويات والأسعار", en: "Memberships & pricing" })} sub={L({ ar: "الاشتراك قيمة ومدّة لكل عضو تُدخَل من قسم «الأعضاء» بعملة الصالة", en: "Subscription amount & duration are entered per member from the Members tab" })} />
+        {empty ? (
+          <div className="chip rounded-2xl p-6 text-center">
+            <div className="text-xs font-bold text-snow mb-1">{L({ ar: "لا يوجد أعضاء بعد", en: "No members yet" })}</div>
+            <div className="text-[10px] text-moss">{L({ ar: "أضف أول عضو من قسم «الأعضاء» وأدخل رسوم اشتراكه وتواريخه", en: "Add your first member from the Members tab and set their fee & dates" })}</div>
+          </div>
+        ) : (
+          <>
+            <div className="grid sm:grid-cols-4 gap-3">
+              {byType.map((b) => (
+                <div key={b.k} className="chip rounded-2xl p-4">
+                  <div className="text-[10px] text-moss">{b.label}</div>
+                  <div className="font-display font-extrabold text-2xl text-snow mt-1">{b.n}</div>
+                  <div className="text-[9px] text-moss2 mt-0.5">{L({ ar: "عضو", en: "members" })}</div>
+                </div>
               ))}
             </div>
-          </div>
-        ))}
+            <div className="chip rounded-2xl p-4 mt-4 flex items-center gap-3">
+              <span className="w-10 h-10 rounded-xl grid place-items-center bg-[var(--brand-soft)] border border-[var(--brand-line)] text-[var(--brand)]"><Icon name="chart" className="w-5 h-5" /></span>
+              <div className="flex-1">
+                <div className="text-xs font-bold text-snow">{L({ ar: "إجمالي الرسوم المسجلة", en: "Total recorded fees" })}</div>
+                <div className="text-[10px] text-moss mt-0.5">{L({ ar: "مجموع رسوم الاشتراكات الحالية بجنيه مصري (ج.م)", en: "Sum of current memberships in EGP" })}</div>
+              </div>
+              <div className="font-display font-extrabold text-2xl text-[var(--brand)]">{fmt(active.reduce((s, c) => s + Number((c as never as { membershipFee?: number }).membershipFee ?? 0), 0))} ج.م</div>
+            </div>
+          </>
+        )}
+        <button onClick={() => toast(L({ ar: "انتقل إلى قسم «الأعضاء» لإدارة الاشتراكات", en: "Manage subscriptions from the Members tab" }), "sky")} className="btn-brand rounded-xl px-6 py-3 text-xs font-bold flex items-center gap-2 mt-4">
+          <Icon name="users" className="w-4 h-4" /> {L({ ar: "إدارة عضوية عضو", en: "Manage a member's subscription" })}
+        </button>
       </div>
-      <button onClick={() => toast(L({ ar: "نُشرت الأسعار الجديدة على متجر العضويات", en: "New prices published to the membership store" }), "brand")} className="btn-brand rounded-xl px-6 py-3 text-xs font-bold flex items-center gap-2 justify-self-start">
-        <Icon name="check" className="w-4 h-4" /> {L({ ar: "نشر الأسعار", en: "Publish pricing" })}
-      </button>
     </>
   );
 }
@@ -713,11 +962,40 @@ function PlansSection() {
 function NotifSection() {
   const L = useL();
   const { toast } = useApp();
+  const [loaded, setLoaded] = useState(false);
   const [ch, setCh] = useState({ email: true, sms: false, push: true });
   const [ev, setEv] = useState({ welcome: true, session: true, expiry: true, report: true, invoice: false });
   const [expDays, setExpDays] = useState(7);
   const [quiet, setQuiet] = useState({ on: true, from: "22:00", to: "07:00" });
-  const [sending, setSending] = useState(false);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    fetchMySettings().then((s) => {
+      const c = s.notification_config as Record<string, unknown> | undefined;
+      if (c && typeof c === "object") {
+        const channels = c.channels as Record<string, unknown> | undefined;
+        const events = c.events as Record<string, unknown> | undefined;
+        const quietCfg = c.quiet_hours as Record<string, unknown> | undefined;
+        if (channels) { setCh((p) => ({ ...p, ...Object.fromEntries(Object.entries(channels).map(([k, v]) => [k, Boolean(v)])) })); }
+        if (events) { setEv((p) => ({ ...p, ...Object.fromEntries(Object.entries(events).map(([k, v]) => [k, Boolean(v)])) })); }
+        if (typeof c.expiry_days === "number") setExpDays(c.expiry_days);
+        if (quietCfg) setQuiet({ on: quietCfg.on !== false, from: String(quietCfg.from || "22:00"), to: String(quietCfg.to || "07:00") });
+      }
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []);
+  const save = async () => {
+    setSaving(true);
+    try {
+      await updateMySettings({
+        notification_config: {
+          channels: ch, events: ev, expiry_days: expDays, quiet_hours: quiet,
+        } as unknown as Record<string, unknown>,
+      });
+      toast(L({ ar: "حُفظت إعدادات الإشعارات ✓", en: "Notification settings saved ✓" }), "mint");
+    } catch {
+      toast(L({ ar: "فشل الحفظ", en: "Save failed" }), "blush");
+    } finally { setSaving(false); }
+  };
   const Row = ({ on, onClick, k, d }: { on: boolean; onClick: () => void; k: string; d: string }) => (
     <div className="chip rounded-xl p-3.5 flex items-center gap-3">
       <div className="flex-1"><div className="text-xs font-bold text-snow">{k}</div><div className="text-[10px] text-moss mt-0.5">{d}</div></div>
@@ -726,11 +1004,12 @@ function NotifSection() {
   );
   return (
     <>
+      {!loaded && <div className="glass p-5 text-xs text-moss">{"جارٍ تحميل الإعدادات…"}</div>}
       <div className="glass p-5">
         <SectionTitle icon="bell" title={L({ ar: "قنوات الإرسال", en: "Delivery channels" })} sub={L({ ar: "SMS برسوم لكل رسالة — Email وPush مجانيان", en: "SMS is metered — Email & Push are free" })} />
         <div className="grid sm:grid-cols-3 gap-3">
           <Row on={ch.email} onClick={() => setCh((s) => ({ ...s, email: !s.email }))} k="Email" d={L({ ar: "قوالب مصممة بعلامتك", en: "Templates styled with your brand" })} />
-          <Row on={ch.sms} onClick={() => setCh((s) => ({ ...s, sms: !s.sms }))} k="SMS" d={L({ ar: "0.12 ر.س / رسالة", en: "0.12 SAR / message" })} />
+          <Row on={ch.sms} onClick={() => setCh((s) => ({ ...s, sms: !s.sms }))} k="SMS" d={L({ ar: "رسوم لكل رسالة", en: "Per-message fee" })} />
           <Row on={ch.push} onClick={() => setCh((s) => ({ ...s, push: !s.push }))} k="Push" d={L({ ar: "إشعارات تطبيق الأعضاء", en: "Member app notifications" })} />
         </div>
       </div>
@@ -760,13 +1039,9 @@ function NotifSection() {
         <input type="time" dir="ltr" disabled={!quiet.on} value={quiet.from} onChange={(e) => setQuiet((s) => ({ ...s, from: e.target.value }))} className={`${inputCls} w-28 disabled:opacity-40`} />
         <span className="text-moss2 text-xs">—</span>
         <input type="time" dir="ltr" disabled={!quiet.on} value={quiet.to} onChange={(e) => setQuiet((s) => ({ ...s, to: e.target.value }))} className={`${inputCls} w-28 disabled:opacity-40`} />
-        <button
-          onClick={() => { setSending(true); window.setTimeout(() => { setSending(false); toast(L({ ar: "وصلك إشعار تجريبي على القنوات المفعّلة ✓", en: "Test notification delivered on active channels ✓" }), "mint"); }, 1100); }}
-          disabled={sending}
-          className="btn-ghost rounded-xl px-4 py-2.5 text-[11px] font-bold text-moss flex items-center gap-2 disabled:opacity-60"
-        >
-          {sending ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="w-4 h-4 anim-spin"><path d="M12 3a9 9 0 1 0 9 9" /></svg> : <Icon name="bolt" className="w-4 h-4" />}
-          {sending ? L({ ar: "جارٍ الإرسال…", en: "Sending…" }) : L({ ar: "إرسال اختباري", en: "Send test" })}
+        <button onClick={save} disabled={saving} className="btn-brand rounded-xl px-5 py-2.5 text-[11px] font-bold flex items-center gap-2 disabled:opacity-60">
+          {saving ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="w-4 h-4 anim-spin"><path d="M12 3a9 9 0 1 0 9 9" /></svg> : <Icon name="check" className="w-4 h-4" />}
+          {L({ ar: "حفظ الإعدادات", en: "Save settings" })}
         </button>
       </div>
     </>
@@ -775,249 +1050,48 @@ function NotifSection() {
 
 function SecuritySection() {
   const L = useL();
-  const { toast } = useApp();
-  const [twoFA, setTwoFA] = useState(true);
-  const [timeout, setTimeoutV] = useState("8h");
-  const [policy, setPolicy] = useState("strong");
-  const [attempts, setAttempts] = useState(5);
-  const [sessions, setSessions] = useState([
-    { id: 1, dev: "Chrome — macOS", loc: { ar: "الرياض، السعودية", en: "Riyadh, SA" }, time: { ar: "الآن · هذا الجهاز", en: "Now · this device" }, current: true },
-    { id: 2, dev: "iPhone 15 — FitPro App", loc: { ar: "جدة، السعودية", en: "Jeddah, SA" }, time: { ar: "قبل ساعة", en: "1h ago" }, current: false },
-    { id: 3, dev: "Windows — Edge", loc: { ar: "الدمام، السعودية", en: "Dammam, SA" }, time: { ar: "قبل يومين", en: "2d ago" }, current: false },
-  ]);
-  const policies = [
-    { id: "basic", ar: "عادية", en: "Basic", dAr: "8 أحرف على الأقل", dEn: "8+ characters" },
-    { id: "strong", ar: "قوية", en: "Strong", dAr: "12+ مع رمز ورقم", dEn: "12+ with symbol & digit" },
-    { id: "max", ar: "قصوى", en: "Maximum", dAr: "16+ وتغيير كل 90 يوم", dEn: "16+ rotated every 90 days" },
-  ];
   return (
-    <>
-      <div className="glass p-5">
-        <SectionTitle icon="shield" title={L({ ar: "حماية الحسابات الإدارية", en: "Admin account protection" })} sub={L({ ar: "تنطبق على الإدارة والمدربين", en: "Applies to admins & trainers" })} />
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div className="chip rounded-xl p-3.5 flex items-center gap-3">
-            <div className="flex-1"><div className="text-xs font-bold text-snow">{L({ ar: "التحقق بخطوتين (2FA)", en: "Two-factor auth (2FA)" })}</div><div className="text-[10px] text-moss mt-0.5">{L({ ar: "إلزامي لكل حساب إداري", en: "Required for every admin account" })}</div></div>
-            <Switch on={twoFA} onClick={() => { setTwoFA(!twoFA); toast(!twoFA ? L({ ar: "فُعّل 2FA — يُطلب عند الدخول القادم", en: "2FA on — required at next login" }) : L({ ar: "أُوقف 2FA — غير موصى به", en: "2FA off — not recommended" }), !twoFA ? "mint" : "ember"); }} />
-          </div>
-          <label className="chip rounded-xl p-3.5 flex items-center gap-3">
-            <div className="flex-1"><div className="text-xs font-bold text-snow">{L({ ar: "انتهاء الجلسة", en: "Session timeout" })}</div><div className="text-[10px] text-moss mt-0.5">{L({ ar: "خروج تلقائي بعد خمول", en: "Auto sign-out after idle" })}</div></div>
-            <select value={timeout} onChange={(e) => setTimeoutV(e.target.value)} className="chip rounded-lg px-2 py-1.5 text-[10px] font-bold text-snow bg-transparent outline-none">
-              {[["30m", "30 " + L({ ar: "دقيقة", en: "min" })], ["2h", "2 " + L({ ar: "ساعة", en: "hours" })], ["8h", "8 " + L({ ar: "ساعات", en: "hours" })], ["24h", L({ ar: "يوم", en: "1 day" })]].map(([v, l]) => <option key={v} value={v} className="bg-[var(--color-panel)]">{l}</option>)}
-            </select>
-          </label>
-        </div>
-        <div className="mt-4">
-          <span className="text-[11px] font-bold text-moss block mb-2">{L({ ar: "سياسة كلمات المرور", en: "Password policy" })}</span>
-          <div className="grid sm:grid-cols-3 gap-2.5">
-            {policies.map((p) => (
-              <button key={p.id} onClick={() => setPolicy(p.id)} className={`rounded-xl border p-3 text-right transition-all ${policy === p.id ? "tab-active" : "border-[var(--glass-border)] hover:border-[var(--glass-hi)]"}`}>
-                <div className="text-xs font-bold">{L(p)}</div>
-                <div className={`text-[9px] mt-0.5 ${policy === p.id ? "opacity-80" : "text-moss2"}`}>{L({ ar: p.dAr, en: p.dEn })}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="mt-4 flex items-center gap-4">
-          <span className="text-[11px] text-moss">{L({ ar: "محاولات دخول قبل القفل", en: "Login attempts before lockout" })}</span>
-          <Stepper value={attempts} onChange={setAttempts} min={3} max={10} />
-        </div>
-      </div>
-      <div className="glass p-5">
-        <SectionTitle icon="eye" title={L({ ar: "الجلسات النشطة", en: "Active sessions" })} sub={L({ ar: "أجهزة الإدارة والمدربين المسجّل دخولها", en: "Signed-in admin & trainer devices" })} />
-        <div className="space-y-2.5">
-          {sessions.map((s) => (
-            <div key={s.id} className="chip rounded-xl p-3.5 flex items-center gap-3">
-              <span className="w-9 h-9 rounded-xl grid place-items-center bg-[var(--brand-soft)] border border-[var(--brand-line)] text-[var(--brand)] shrink-0"><Icon name="shield" className="w-4 h-4" /></span>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-bold text-snow flex items-center gap-2">{s.dev} {s.current && <Badge tone="mint">{L({ ar: "هذا الجهاز", en: "This device" })}</Badge>}</div>
-                <div className="text-[10px] text-moss mt-0.5">{L(s.loc)} · {L(s.time)}</div>
-              </div>
-              {!s.current && (
-                <button onClick={() => { setSessions((x) => x.filter((y) => y.id !== s.id)); toast(L({ ar: "أُنهيت الجلسة وأُشعر صاحبها بالبريد", en: "Session revoked & owner notified" }), "ember"); }} className="btn-ghost rounded-lg px-3 py-1.5 text-[10px] font-bold text-blush">
-                  {L({ ar: "إنهاء", en: "Revoke" })}
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
+    <div className="glass p-8 text-center">
+      <div className="w-16 h-16 rounded-2xl mx-auto grid place-items-center bg-[var(--brand-soft)] border border-[var(--brand-line)] text-[var(--brand)] mb-4"><Icon name="shield" className="w-8 h-8" /></div>
+      <div className="font-display font-bold text-snow text-lg">{L({ ar: "الأمان والجلسات — قريباً", en: "Security & sessions — coming soon" })}</div>
+      <div className="text-[11px] text-moss mt-2 max-w-md mx-auto leading-5">{L({ ar: "التحقق بخطوتين، سياسة كلمات المرور، وإدارة الجلسات النشطة ستتوفر قريباً. حالياً كل حساب محمي بمصادقة JWT مع انتهاء صلاحية للتجديد.", en: "2FA, password policy, and active-session management are coming soon. Today every account is protected by JWT auth with rotating tokens." })}</div>
+    </div>
   );
 }
 
 function PaymentsSection() {
   const L = useL();
-  const { toast } = useApp();
-  const [providers, setProviders] = useState({ moyasar: true, stripe: false, hyperpay: false, applepay: false });
-  const [autoRenew, setAutoRenew] = useState(true);
-  const [prefix, setPrefix] = useState("FP-");
-  const [vat, setVat] = useState("310123456700003");
-  const [payout, setPayout] = useState("weekly");
-  const rows: { key: keyof typeof providers; name: string; badge: { ar: string; en: string } | null; d: { ar: string; en: string } }[] = [
-    { key: "moyasar", name: "Moyasar", badge: { ar: "مباشر", en: "Live" }, d: { ar: "مدى، فيزا، ماستركارد، Apple Pay", en: "mada, Visa, Mastercard, Apple Pay" } },
-    { key: "stripe", name: "Stripe", badge: { ar: "تجريبي", en: "Test mode" }, d: { ar: "للاشتراكات الدولية", en: "For international billing" } },
-    { key: "hyperpay", name: "HyperPay", badge: null, d: { ar: "بوابة خليجية بديلة", en: "Alternative GCC gateway" } },
-    { key: "applepay", name: "Apple Pay", badge: null, d: { ar: "دفع مباشر عبر Moyasar", en: "Direct pay via Moyasar" } },
-  ];
   return (
-    <>
-      <div className="glass p-5">
-        <SectionTitle icon="chart" title={L({ ar: "مزوّدو الدفع", en: "Payment providers" })} sub={L({ ar: "فعّل أكثر من مزوّد — يختار العضو عند الدفع", en: "Enable several — members choose at checkout" })} />
-        <div className="grid sm:grid-cols-2 gap-3">
-          {rows.map((r) => (
-            <div key={r.key} className="chip rounded-xl p-3.5 flex items-center gap-3">
-              <div className="flex-1">
-                <div className="text-xs font-bold text-snow flex items-center gap-2" dir="ltr">{r.name} {r.badge && <Badge tone={providers[r.key] ? (r.badge.en === "Live" ? "mint" : "ember") : "moss"}>{L(r.badge)}</Badge>}</div>
-                <div className="text-[10px] text-moss mt-0.5">{L(r.d)}</div>
-              </div>
-              <Switch on={providers[r.key]} onClick={() => setProviders((s) => ({ ...s, [r.key]: !s[r.key] }))} />
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="glass p-5">
-        <SectionTitle icon="edit" title={L({ ar: "الفوترة", en: "Invoicing" })} sub={L({ ar: "تنسيق الفواتير والضريبة والتحويلات", en: "Invoice format, tax & payouts" })} />
-        <div className="grid sm:grid-cols-2 gap-4">
-          <label className="block">
-            <span className="text-[11px] font-bold text-moss block mb-1.5">{L({ ar: "بادئة رقم الفاتورة", en: "Invoice prefix" })}</span>
-            <input dir="ltr" value={prefix} onChange={(e) => setPrefix(e.target.value)} className={`${inputCls} font-display font-bold`} />
-          </label>
-          <label className="block">
-            <span className="text-[11px] font-bold text-moss block mb-1.5">{L({ ar: "الرقم الضريبي (VAT)", en: "VAT number" })}</span>
-            <input dir="ltr" value={vat} onChange={(e) => setVat(e.target.value)} className={inputCls} />
-          </label>
-          <label className="block">
-            <span className="text-[11px] font-bold text-moss block mb-1.5">{L({ ar: "جدول التحويلات البنكية", en: "Payout schedule" })}</span>
-            <select value={payout} onChange={(e) => setPayout(e.target.value)} className={inputCls}>
-              {[["weekly", { ar: "أسبوعي — كل أحد", en: "Weekly — Sundays" }], ["biweekly", { ar: "نصف شهري", en: "Bi-weekly" }], ["monthly", { ar: "شهري — أول الشهر", en: "Monthly — 1st" }]].map(([v, l]) => <option key={v as string} value={v as string} className="bg-[var(--color-panel)]">{L(l as { ar: string; en: string })}</option>)}
-            </select>
-          </label>
-          <div className="chip rounded-xl p-3.5 flex items-center gap-3">
-            <div className="flex-1"><div className="text-xs font-bold text-snow">{L({ ar: "تجديد تلقائي", en: "Auto-renewal" })}</div><div className="text-[10px] text-moss mt-0.5">{L({ ar: "خصم العضوية عند انتهائها بموافقة العضو", en: "Charge on expiry with member consent" })}</div></div>
-            <Switch on={autoRenew} onClick={() => setAutoRenew(!autoRenew)} tone="#FF8A3C" />
-          </div>
-        </div>
-        <button onClick={() => toast(L({ ar: "حُفظت إعدادات الدفع — تُطبق على الفاتورة القادمة", en: "Payment settings saved — applied to next invoice" }), "brand")} className="btn-brand rounded-xl px-5 py-2.5 text-xs font-bold mt-4 flex items-center gap-2">
-          <Icon name="check" className="w-4 h-4" /> {L({ ar: "حفظ إعدادات الدفع", en: "Save payment settings" })}
-        </button>
-      </div>
-    </>
+    <div className="glass p-8 text-center">
+      <div className="w-16 h-16 rounded-2xl mx-auto grid place-items-center bg-[var(--brand-soft)] border border-[var(--brand-line)] text-[var(--brand)] mb-4"><Icon name="chart" className="w-8 h-8" /></div>
+      <div className="font-display font-bold text-snow text-lg">{L({ ar: "بوابات الدفع — قريباً", en: "Payment gateways — coming soon" })}</div>
+      <div className="text-[11px] text-moss mt-2 max-w-md mx-auto leading-5">{L({ ar: "الدفع الإلكتروني والتجديد التلقائي سيأتيان لاحقاً. حالياً تُسجَّل اشتراكات الأعضاء يدوياً بعملة الصالة (ج.م) من قسم «الأعضاء».", en: "Online payments & auto-renewal are coming later. Today member subscriptions are recorded manually in your gym currency (EGP) from the Members tab." })}</div>
+    </div>
   );
 }
 
 function ApiSection() {
   const L = useL();
-  const { toast, gym } = useApp();
-  const slug = gym.nameEn.toLowerCase().replace(/[^a-z]+/g, "");
-  const [showKey, setShowKey] = useState(false);
-  const [apiKey, setApiKey] = useState("fp_live_8fK2mQ9xRt1vBn4cYw7z3f2a");
-  const [confirmRegen, setConfirmRegen] = useState(false);
-  const [hookUrl, setHookUrl] = useState(`https://api.${slug}.sa/webhooks/fitpro`);
-  const [hookEvents, setHookEvents] = useState<Record<string, boolean>>({ "member.created": true, "member.expired": true, "checkin.submitted": true, "scale.synced": false });
-  const [ints, setInts] = useState<Record<string, "idle" | "busy" | "on">>({ zapier: "idle", whatsapp: "idle", gcal: "idle" });
-  const masked = apiKey.slice(0, 8) + "••••••••" + apiKey.slice(-4);
-  const copy = () => {
-    try { navigator.clipboard?.writeText(apiKey); } catch { /* noop */ }
-    toast(L({ ar: "نُسخ المفتاح إلى الحافظة", en: "Key copied to clipboard" }), "mint");
-  };
-  const regen = () => {
-    if (!confirmRegen) { setConfirmRegen(true); window.setTimeout(() => setConfirmRegen(false), 3000); return; }
-    const rand = Array.from({ length: 24 }, () => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random() * 62)]).join("");
-    setApiKey(`fp_live_${rand}`);
-    setConfirmRegen(false);
-    toast(L({ ar: "وُلّد مفتاح جديد — أوقف المفتاح القديم فوراً", en: "New key generated — old key revoked" }), "ember");
-  };
-  const connect = (k: string, name: string) => {
-    setInts((s) => ({ ...s, [k]: "busy" }));
-    window.setTimeout(() => { setInts((s) => ({ ...s, [k]: "on" })); toast(L({ ar: `ارتبط ${name} بحساب الصالة ✓`, en: `${name} connected to the gym ✓` }), "mint"); }, 1200);
-  };
-  const intRows = [
-    { k: "zapier", name: "Zapier", d: { ar: "أتمتة مع 5000+ تطبيق", en: "Automate with 5000+ apps" } },
-    { k: "whatsapp", name: "WhatsApp Business", d: { ar: "تذكيرات عبر واتساب", en: "Reminders over WhatsApp" } },
-    { k: "gcal", name: "Google Calendar", d: { ar: "مزامنة مواعيد الجلسات", en: "Sync session bookings" } },
-  ];
   return (
-    <>
-      <div className="glass p-5">
-        <SectionTitle icon="bolt" title="REST API" sub={L({ ar: "مفتاح مباشر بصلاحيات هذه الصالة فقط (Tenant-scoped)", en: "Live key scoped to this gym tenant only" })} />
-        <div className="chip rounded-xl p-3.5 flex items-center gap-3 flex-wrap">
-          <code dir="ltr" className="font-display font-bold text-sm text-[var(--brand)] tracking-wide flex-1 min-w-[200px]">{showKey ? apiKey : masked}</code>
-          <button onClick={() => setShowKey((s) => !s)} className="btn-ghost rounded-lg px-3 py-1.5 text-[10px] font-bold text-moss flex items-center gap-1.5"><Icon name="eye" className="w-3.5 h-3.5" /> {showKey ? L({ ar: "إخفاء", en: "Hide" }) : L({ ar: "عرض", en: "Show" })}</button>
-          <button onClick={copy} className="btn-ghost rounded-lg px-3 py-1.5 text-[10px] font-bold text-moss flex items-center gap-1.5"><Icon name="edit" className="w-3.5 h-3.5" /> {L({ ar: "نسخ", en: "Copy" })}</button>
-          <button onClick={regen} className={`btn-ghost rounded-lg px-3 py-1.5 text-[10px] font-bold flex items-center gap-1.5 ${confirmRegen ? "!border-blush/60 text-blush" : "text-moss"}`}>
-            <Icon name="spark" className="w-3.5 h-3.5" /> {confirmRegen ? L({ ar: "متأكد؟ انقر مجدداً", en: "Sure? Click again" }) : L({ ar: "توليد جديد", en: "Regenerate" })}
-          </button>
-        </div>
-        <p className="text-[9px] text-moss2 mt-2.5 leading-4">{L({ ar: "حد المعدل: 300 طلب/دقيقة — التوثيق الكامل: docs.fitpro.app", en: "Rate limit: 300 req/min — full docs at docs.fitpro.app" })}</p>
-      </div>
-      <div className="glass p-5">
-        <SectionTitle icon="bell" title="Webhooks" sub={L({ ar: "استدعاء فوري لأنظمتك عند كل حدث", en: "Instant callbacks to your systems on every event" })} />
-        <input dir="ltr" value={hookUrl} onChange={(e) => setHookUrl(e.target.value)} className={`${inputCls} mb-3`} />
-        <div className="flex gap-1.5 flex-wrap mb-4">
-          {Object.keys(hookEvents).map((e) => (
-            <button key={e} onClick={() => setHookEvents((s) => ({ ...s, [e]: !s[e] }))} dir="ltr" className={`px-2.5 py-1 rounded-lg border text-[9px] font-bold font-display transition-all ${hookEvents[e] ? "tab-active" : "border-[var(--glass-border)] text-moss2"}`}>
-              {hookEvents[e] ? "✓ " : ""}{e}
-            </button>
-          ))}
-        </div>
-        <button onClick={() => toast(L({ ar: "أُرسلت دفعة اختبار — استجاب الخادم بـ 200 OK", en: "Test payload sent — your server responded 200 OK" }), "mint")} className="btn-ghost rounded-xl px-4 py-2 text-[11px] font-bold text-moss flex items-center gap-2">
-          <Icon name="bolt" className="w-4 h-4" /> {L({ ar: "إرسال حدث تجريبي", en: "Fire test event" })}
-        </button>
-      </div>
-      <div className="grid sm:grid-cols-3 gap-4">
-        {intRows.map((x) => (
-          <div key={x.k} className="glass panel-hover p-4 flex flex-col">
-            <div className="font-display font-bold text-snow text-sm" dir="ltr">{x.name}</div>
-            <div className="text-[10px] text-moss mt-1 flex-1">{L(x.d)}</div>
-            <button
-              onClick={() => ints[x.k] === "idle" && connect(x.k, x.name)}
-              disabled={ints[x.k] !== "idle"}
-              className={`mt-3 rounded-xl py-2 text-[10px] font-bold flex items-center justify-center gap-2 transition-all ${ints[x.k] === "on" ? "chip text-mint !border-mint/50" : "btn-brand"}`}
-            >
-              {ints[x.k] === "busy" ? (<><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="w-3.5 h-3.5 anim-spin"><path d="M12 3a9 9 0 1 0 9 9" /></svg>{L({ ar: "جارٍ الربط…", en: "Connecting…" })}</>) : ints[x.k] === "on" ? (<><Icon name="check" className="w-3.5 h-3.5" />{L({ ar: "مرتبط", en: "Connected" })}</>) : L({ ar: "ربط", en: "Connect" })}
-            </button>
-          </div>
-        ))}
-      </div>
-    </>
+    <div className="glass p-8 text-center">
+      <div className="w-16 h-16 rounded-2xl mx-auto grid place-items-center bg-[var(--brand-soft)] border border-[var(--brand-line)] text-[var(--brand)] mb-4"><Icon name="bolt" className="w-8 h-8" /></div>
+      <div className="font-display font-bold text-snow text-lg">{L({ ar: "مفاتيح API والتكاملات — قريباً", en: "API keys & integrations — coming soon" })}</div>
+      <div className="text-[11px] text-moss mt-2 max-w-md mx-auto leading-5">{L({ ar: "مفاتيح API نصّية، Webhooks، وربط Zapier/WhatsApp/Google Calendar ستتوفر قريباً لعبّاد هذه النسخة.", en: "Scoped API keys, Webhooks, and Zapier / WhatsApp / Google Calendar connections are coming soon for this version." })}</div>
+    </div>
   );
 }
 
 function DataSection() {
   const L = useL();
   const { toast } = useApp();
-  const [backing, setBacking] = useState(false);
-  const [lastBackup, setLastBackup] = useState({ ar: "اليوم 03:00 ص", en: "Today 03:00 AM" });
-  const [schedule, setSchedule] = useState("daily");
   const [confirmDel, setConfirmDel] = useState("");
-  const backupNow = () => {
-    setBacking(true);
-    window.setTimeout(() => {
-      setBacking(false);
-      const now = new Date();
-      setLastBackup({ ar: `الآن ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`, en: `Just now ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}` });
-      toast(L({ ar: "اكتملت النسخة (4.2GB) ورُفعت مشفَّرة إلى S3", en: "Backup complete (4.2GB) — encrypted to S3" }), "mint");
-    }, 1600);
-  };
   return (
     <>
       <div className="glass p-5">
-        <SectionTitle icon="layers" title={L({ ar: "النسخ الاحتياطي", en: "Backups" })} sub={L({ ar: `آخر نسخة: ${L(lastBackup)} · تُخزَّن 30 يوماً مع استعادة نقطة زمنية`, en: `Last: ${L(lastBackup)} · kept 30 days with point-in-time restore` })} />
-        <div className="flex flex-wrap items-center gap-3">
-          <select value={schedule} onChange={(e) => setSchedule(e.target.value)} className={`${inputCls} w-44`}>
-            {[["daily", { ar: "يومي — 03:00 ص", en: "Daily — 03:00 AM" }], ["weekly", { ar: "أسبوعي — الجمعة", en: "Weekly — Friday" }]].map(([v, l]) => <option key={v as string} value={v as string} className="bg-[var(--color-panel)]">{L(l as { ar: string; en: string })}</option>)}
-          </select>
-          <button onClick={backupNow} disabled={backing} className="btn-brand rounded-xl px-5 py-2.5 text-xs font-bold flex items-center gap-2 disabled:opacity-70">
-            {backing ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" className="w-4 h-4 anim-spin"><path d="M12 3a9 9 0 1 0 9 9" /></svg> : <Icon name="bolt" className="w-4 h-4" />}
-            {backing ? L({ ar: "جارٍ النسخ…", en: "Backing up…" }) : L({ ar: "نسخ الآن", en: "Backup now" })}
-          </button>
-        </div>
-        <div className="mt-4">
-          <div className="flex justify-between text-[11px] mb-1.5">
-            <span className="font-bold text-snow">{L({ ar: "التخزين (صور وملفات)", en: "Storage (photos & files)" })}</span>
-            <span className="font-display text-moss"><b className="text-snow">62</b> / 100 GB</span>
-          </div>
-          <Meter pct={62} color="#45D6C0" />
+        <SectionTitle icon="layers" title={L({ ar: "النسخ الاحتياطي", en: "Backups" })} sub={L({ ar: "يُدار تلقائياً على خوادم FitPro — النسخ اليدوي قريباً", en: "Managed automatically on FitPro servers — manual backups coming soon" })} />
+        <div className="chip rounded-xl p-4 text-[11px] text-moss flex items-center gap-3">
+          <Icon name="shield" className="w-4 h-4 text-mint shrink-0" />
+          {L({ ar: "منصة FitPro تنسخ بياناتك يومياً على خوادم مشفَّرة. سيصلك إشعار عند توفر النسخ اليدوي والاستعادة بنقطة زمنية.", en: "FitPro backs up your data daily to encrypted servers. You'll be notified when manual backups & point-in-time restore arrive." })}
         </div>
       </div>
       <div className="glass p-5">
@@ -1030,36 +1104,29 @@ function DataSection() {
             <div className="text-xs font-bold text-snow group-hover:text-[var(--brand)] transition-colors">{L({ ar: "سجل الأعضاء", en: "Members list" })}</div>
             <div className="text-[10px] text-moss mt-1">{CLIENTS.length} {L({ ar: "عضو · الاسم، العضوية، الوزن، الالتزام", en: "members · name, plan, weight, adherence" })}</div>
           </button>
-          <button
-            onClick={() => { downloadCsv([[L({ ar: "الأسبوع", en: "Week" }), L({ ar: "الوزن كغ", en: "Weight kg" })], ...WEIGHT_SERIES.map((w, i) => [`${i + 1}`, w])], "fitpro-progress.csv"); toast(L({ ar: "نُزّل سجل التقدم (CSV) ✓", en: "Progress CSV downloaded ✓" }), "mint"); }}
-            className="btn-ghost rounded-xl p-4 text-right group"
-          >
-            <div className="text-xs font-bold text-snow group-hover:text-[var(--brand)] transition-colors">{L({ ar: "سجل تقدم الأوزان", en: "Weight progress log" })}</div>
-            <div className="text-[10px] text-moss mt-1">12 {L({ ar: "أسبوعاً · قياسات الأسبوع", en: "weeks · weekly measurements" })}</div>
-          </button>
+          <div className="btn-ghost rounded-xl p-4 opacity-60 cursor-not-allowed">
+            <div className="text-xs font-bold text-snow">{L({ ar: "سجل تقدم الأوزان", en: "Weight progress log" })}</div>
+            <div className="text-[10px] text-moss mt-1">{L({ ar: "قريباً", en: "Coming soon" })}</div>
+          </div>
         </div>
       </div>
       <div className="rounded-[calc(var(--radius)*1px)] border border-blush/35 bg-blush/5 p-5">
         <SectionTitle icon="trash" title={L({ ar: "منطقة الخطر", en: "Danger zone" })} sub={L({ ar: "إجراءات لا يمكن التراجع عنها", en: "Actions that cannot be undone" })} />
         <div className="grid sm:grid-cols-2 gap-4">
-          <div className="chip rounded-xl p-4 !border-blush/25">
+          <div className="chip rounded-xl p-4 !border-blush/25 opacity-60">
             <div className="text-xs font-bold text-snow">{L({ ar: "حذف صور التقدم", en: "Delete progress photos" })}</div>
-            <div className="text-[10px] text-moss mt-1 mb-3">{L({ ar: "اكتب «حذف» للتأكيد", en: "Type DELETE to confirm" })}</div>
+            <div className="text-[10px] text-moss mt-1 mb-3">{L({ ar: "قريباً", en: "Coming soon" })}</div>
             <div className="flex gap-2">
               <input value={confirmDel} onChange={(e) => setConfirmDel(e.target.value)} placeholder={L({ ar: "حذف", en: "DELETE" })} className={`${inputCls} flex-1 !border-blush/30`} />
-              <button
-                onClick={() => { toast(L({ ar: "حُذفت 1,204 صور وأُشعر الأعضاء حسب السياسة", en: "1,204 photos deleted — members notified per policy" }), "blush"); setConfirmDel(""); }}
-                disabled={confirmDel !== L({ ar: "حذف", en: "DELETE" })}
-                className="rounded-xl px-4 py-2 text-[10px] font-bold bg-blush/15 border border-blush/40 text-blush disabled:opacity-40 transition-all hover:bg-blush/25"
-              >
+              <button disabled className="rounded-xl px-4 py-2 text-[10px] font-bold bg-blush/15 border border-blush/40 text-blush disabled:opacity-40">
                 {L({ ar: "حذف نهائي", en: "Delete" })}
               </button>
             </div>
           </div>
-          <div className="chip rounded-xl p-4 !border-blush/25">
+          <div className="chip rounded-xl p-4 !border-blush/25 opacity-60">
             <div className="text-xs font-bold text-snow">{L({ ar: "نقل ملكية الصالة", en: "Transfer gym ownership" })}</div>
-            <div className="text-[10px] text-moss mt-1 mb-3">{L({ ar: "لمدير آخر أو لمنصة FitPro", en: "To another admin or back to FitPro" })}</div>
-            <button onClick={() => toast(L({ ar: "أُرسل طلب النقل — يتطلب موافقة الطرف الآخر", en: "Transfer requested — pending recipient approval" }), "ember")} className="rounded-xl px-4 py-2 text-[10px] font-bold bg-ember/15 border border-ember/40 text-ember transition-all hover:bg-ember/25">
+            <div className="text-[10px] text-moss mt-1 mb-3">{L({ ar: "قريباً", en: "Coming soon" })}</div>
+            <button className="rounded-xl px-4 py-2 text-[10px] font-bold bg-ember/15 border border-ember/40 text-ember opacity-60">
               {L({ ar: "بدء النقل", en: "Start transfer" })}
             </button>
           </div>

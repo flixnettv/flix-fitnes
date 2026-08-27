@@ -5,6 +5,7 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 
 from core.permissions import IsGymAdminOrTrainer
@@ -29,6 +30,9 @@ class FoodViewSet(TenantScopedViewSet):
         return Food.objects.filter(gym=gym)
 
     def perform_create(self, serializer):
+        u = self.request.user
+        if hasattr(u, "client_profile") and not (u.is_superuser or hasattr(u, "gym_admin_profile")):
+            raise PermissionDenied("العميل لا يمكنه إنشاء أطعمة")
         serializer.save(gym=self.get_gym(), is_custom=True)
 
 
@@ -53,6 +57,9 @@ class MealPlanViewSet(TenantScopedViewSet):
         return qs.distinct()
 
     def perform_create(self, serializer):
+        u = self.request.user
+        if hasattr(u, "client_profile") and not (u.is_superuser or hasattr(u, "gym_admin_profile")):
+            raise PermissionDenied("العميل لا يمكنه إنشاء خطط تغذية")
         trainer = getattr(self.request.user, "trainer_profile", None)
         client = None
         client_id = self.request.data.get("client_id")

@@ -61,6 +61,14 @@ class Gym(models.Model):
     meta_title = models.CharField(_("Meta Title"), max_length=120, blank=True)
     meta_description = models.TextField(_("Meta Description"), blank=True)
 
+    # General settings (gym admin managed)
+    address = models.CharField(_("Address"), max_length=255, blank=True)
+    opening_hours = models.JSONField(_("Opening Hours"), default=dict, blank=True,
+        help_text=_('{"sat": "9:00-23:00", "fri": "closed"}'))
+    currency = models.CharField(_("Currency"), max_length=10, default="EGP")
+    notification_config = models.JSONField(_("Notification Config"), default=dict, blank=True,
+        help_text=_('{"channels": {"email": true, "sms": false, "push": true}, "events": {...}, "expiry_reminder_days": 3}'))
+
     is_active = models.BooleanField(_("Is Active"), default=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

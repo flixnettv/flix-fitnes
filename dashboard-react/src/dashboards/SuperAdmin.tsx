@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { ACTIVITY, fmt, GYMS, money, REVENUE_SERIES, TRAINERS } from "../data";
 import { useApp } from "../store";
-import { fetchGyms, createGym, createTrainerStandalone, updateGym, fetchGymStats, type AdminGym } from "../lib/api";
+import { fetchGyms, createGym, createTrainerStandalone, updateGym, fetchGymStats,
+  fetchGymAdmins, addGymAdmin, removeGymAdmin, updateGymAdminPermissions, type AdminGym, type GymAdminProfile } from "../lib/api";
 import AppearanceEditor from "../components/AppearanceEditor";
 import { fetchUsers, updateUser, setUserPassword, deleteUser, fetchTrainerAdmins,
   updateTrainerAdmin, resetTrainerPassword, deleteTrainerAdmin, type AdminUser } from "../lib/api";
@@ -118,6 +119,145 @@ function Overview() {
   );
 }
 
+const ADMIN_PERMS: { key: string; label: string; desc: string }[] = [
+  { key: "manage_members", label: "إدارة الأعضاء", desc: "إضافة/تعديل/أرشفة العملاء" },
+  { key: "manage_trainers", label: "إدارة المدربين", desc: "تعيين المدربين وإدارتهم" },
+  { key: "manage_plans", label: "خطط وبرامج", desc: "خطط التدريب والتغذية" },
+  { key: "manage_settings", label: "إعدادات الصالة", desc: "الإعدادات العامة والتنبيهات" },
+];
+
+function AdminsModal({ gym, onClose }: { gym: AdminGym; onClose: () => void }) {
+  const { toast } = useApp();
+  const [list, setList] = useState<GymAdminProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [af, setAf] = useState({ email: "", password: "" });
+  const [confirmRem, setConfirmRem] = useState<GymAdminProfile | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try { setList(await fetchGymAdmins(gym.id)); } catch { /* noop */ } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [gym.id]);
+
+  const add = async () => {
+    if (!af.email.includes("@")) { toast("بريد إلكتروني صحيح مطلوب", "ember"); return; }
+    setBusy(true);
+    try {
+      await addGymAdmin(gym.id, af.email, af.password);
+      toast("أُضيف المدير للصالة ✓", "mint");
+      setAf({ email: "", password: "" });
+      await load();
+    } catch { toast("تعذّر الإضافة — تحقق من البريد وكلمة المرور (8+ أحرف)", "ember"); }
+    finally { setBusy(false); }
+  };
+
+  const togglePerm = async (p: GymAdminProfile, key: string) => {
+    const next = { ...(p.permissions || {}) };
+    next[key] = !(p.permissions[key] ?? true);
+    try {
+      const r = await updateGymAdminPermissions(gym.id, p.id, next);
+      setList((ls) => ls.map((a) => (a.id === p.id ? { ...a, permissions: r.permissions } : a)));
+    } catch { toast("تعذّر تحديث الصلاحية", "ember"); }
+  };
+
+  const remove = async () => {
+    if (!confirmRem) return;
+    setBusy(true);
+    try {
+      await removeGymAdmin(gym.id, confirmRem.id);
+      setConfirmRem(null);
+      await load();
+      toast("أُزيل المدير من الصالة", "ember");
+    } catch { toast("تعذّر الإزالة — المدير الرئيسي الوحيد لا يمكن إزالته", "ember"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative glass-deep rounded-3xl border border-[var(--glass-border)] w-full max-w-lg max-h-[90vh] overflow-y-auto anim-fade-up p-6">
+        <div className="flex items-center justify-between gap-3">
+          <SectionTitle icon="shield" title={"مدراء: " + gym.name} sub={gym.slug + ".fitpro.hftv.qzz.io"} />
+          <button onClick={onClose} className="btn-ghost rounded-xl px-3 py-2 text-[11px] font-bold text-moss">إغلاق</button>
+        </div>
+
+        <div className="mt-4 grid gap-2.5">
+          {loading ? (
+            <div className="panel p-8 text-center text-xs text-moss">جارٍ التحميل…</div>
+          ) : list.length === 0 ? (
+            <div className="panel p-8 text-center text-xs text-moss">لا مدراء بعد</div>
+          ) : (
+            list.map((p) => (
+              <div key={p.id} className="glass rounded-2xl p-3.5">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="w-9 h-9 rounded-xl grid place-items-center font-display font-bold text-xs shrink-0" style={{ background: "var(--brand-soft)", color: "var(--brand)" }}>
+                    {(p.name || p.email).charAt(0).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-snow truncate">{p.name}</span>
+                      {p.is_primary && <Badge tone="brand">مدير رئيسي</Badge>}
+                    </div>
+                    <div className="text-[10px] text-moss2 truncate" dir="ltr">{p.email}</div>
+                  </div>
+                  <button
+                    disabled={p.is_primary || busy}
+                    onClick={() => setConfirmRem(p)}
+                    className="btn-ghost rounded-lg px-2.5 py-1.5 text-[10px] font-bold text-blush hover:!border-blush/40 disabled:opacity-40"
+                  >إزالة</button>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-1.5 mt-3">
+                  {ADMIN_PERMS.map((perm) => (
+                    <div key={perm.key} className="chip rounded-xl px-3 py-2 flex items-center gap-2.5">
+                      <Switch
+                        on={p.permissions[perm.key] ?? true}
+                        tone="var(--brand)"
+                        onClick={() => togglePerm(p, perm.key)}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[10px] font-bold text-snow">{perm.label}</div>
+                        <div className="text-[9px] text-moss2 truncate">{perm.desc}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="mt-4 border-t border-[var(--glass-border)] pt-4">
+          <div className="text-[10px] font-bold text-moss mb-2">إضافة مدير جديد</div>
+          <div className="grid gap-2">
+            <input dir="ltr" value={af.email} onChange={(e) => setAf((f) => ({ ...f, email: e.target.value }))} placeholder="admin@gym.com *" className="chip rounded-xl px-4 py-3 text-xs text-snow outline-none bg-transparent" />
+            <input dir="ltr" type="password" value={af.password} onChange={(e) => setAf((f) => ({ ...f, password: e.target.value }))} placeholder="كلمة المرور للحساب الجديد (8+ أحرف)" className="chip rounded-xl px-4 py-3 text-xs text-snow outline-none bg-transparent" />
+            <button disabled={busy} onClick={add} className="btn-brand rounded-xl py-2.5 text-xs font-display font-bold disabled:opacity-60">
+              {busy ? "جارٍ…" : "إضافة مدير"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {confirmRem && (
+        <div className="fixed inset-0 z-50 grid place-items-center p-4">
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setConfirmRem(null)} />
+          <div className="relative glass-deep rounded-3xl border border-blush/40 w-full max-w-sm anim-fade-up p-6 text-center">
+            <div className="text-blush font-display font-bold text-sm mb-2">تأكيد إزالة المدير</div>
+            <p className="text-xs text-moss leading-6">سيفقد <b className="text-snow" dir="ltr">{confirmRem.email}</b> صلاحيات الإدارة على هذه الصالة. هل أنت متأكد؟</p>
+            <div className="grid gap-2 mt-5">
+              <button disabled={busy} onClick={remove} className="rounded-xl py-3 text-xs font-bold bg-blush/20 border border-blush/40 text-blush disabled:opacity-60">
+                {busy ? "جارٍ…" : "نعم، إزالة"}
+              </button>
+              <button onClick={() => setConfirmRem(null)} className="btn-ghost rounded-xl py-3 text-xs font-bold text-moss">إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GymsTable() {
   const { toast } = useApp();
   const [gyms, setGyms] = useState<AdminGym[]>([]);
@@ -125,6 +265,7 @@ function GymsTable() {
   const [loading, setLoading] = useState(true);
   const [openGym, setOpenGym] = useState(false);
   const [openTr, setOpenTr] = useState(false);
+  const [openAdmins, setOpenAdmins] = useState<AdminGym | null>(null);
   const [editGym, setEditGym] = useState<AdminGym | null>(null);
   const [gf, setGf] = useState({ name: "", slug: "", city: "", primary_color: "#C6F24E", admin_email: "", admin_password: "" });
   const [tf, setTf] = useState({ name: "", email: "", slug: "", primary_color: "#7FB4FF", password: "" });
@@ -208,6 +349,9 @@ function GymsTable() {
                 {g.kind === "personal" ? "\u0645\u062f\u0631\u0628 \u0645\u0633\u062a\u0642\u0644" : "\u0635\u0627\u0644\u0629"}
               </span>
               <Badge tone={g.is_active ? "mint" : "moss"}>{g.is_active ? "\u0646\u0634\u0637\u0629" : "\u0645\u0648\u0642\u0641\u0629"}</Badge>
+              <button onClick={() => setOpenAdmins(g)} className="btn-ghost rounded-xl px-3.5 py-2 text-[10px] font-bold text-moss hover:text-snow flex items-center gap-1.5">
+                <Icon name="shield" className="w-3.5 h-3.5" /> {"\u0627\u0644\u0645\u062f\u0631\u0627\u0621"}
+              </button>
               <button onClick={() => setEditGym(g)} className="btn-ghost rounded-xl px-3.5 py-2 text-[10px] font-bold text-moss hover:text-[var(--brand)] flex items-center gap-1.5">
                 <Icon name="palette" className="w-3.5 h-3.5" /> {"\u0627\u0644\u0647\u0648\u064a\u0629"}
               </button>
@@ -275,6 +419,9 @@ function GymsTable() {
           </div>
         </div>
       )}
+
+      {/* gym admins manager */}
+      {openAdmins && <AdminsModal gym={openAdmins} onClose={() => setOpenAdmins(null)} />}
 
       {/* identity editor modal */}
       {editGym && (

@@ -346,6 +346,11 @@ class ClientProfile(TenantBaseModel, ActivationMixin, TimeStampedMixin):
     )
     membership_start = models.DateField(_("Membership Start"))
     membership_end = models.DateField(_("Membership End"))
+    membership_fee = models.DecimalField(
+        _("Membership Fee (EGP)"),
+        max_digits=10, decimal_places=2, default=0,
+        help_text=_("Subscription amount in EGP, entered manually by the gym admin"),
+    )
     goals = models.JSONField(
         _("Goals"),
         default=list,
@@ -388,7 +393,7 @@ class ClientProfile(TenantBaseModel, ActivationMixin, TimeStampedMixin):
 
 class GymAdminProfile(TenantBaseModel, TimeStampedMixin):
     """
-    Gym Admin profile - one per gym.
+    Gym Admin profile - one user can admin one gym; a gym may have several admins.
     """
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -396,19 +401,28 @@ class GymAdminProfile(TenantBaseModel, TimeStampedMixin):
         related_name="gym_admin_profile",
         verbose_name=_("User")
     )
-    gym = models.OneToOneField(
+    gym = models.ForeignKey(
         "gym_center.Gym",
         on_delete=models.CASCADE,
-        related_name="admin_profile",
+        related_name="admin_profiles",
         verbose_name=_("Gym")
     )
+    is_primary = models.BooleanField(_("Primary Admin"), default=False)
     permissions = models.JSONField(
         _("Custom Permissions"),
         default=dict,
         blank=True,
-        help_text=_("Custom permissions override: {\"manage_trainers\": true, \"view_analytics\": true}")
+        help_text=_('Permission overrides: {"manage_members": false, "manage_trainers": false} — unset keys stay allowed'),
     )
-    
+
+    DEFAULT_PERMISSIONS = {
+        "manage_members": True,
+        "manage_trainers": True,
+        "manage_plans": True,
+        "manage_settings": True,
+        "view_analytics": True,
+    }
+
     class Meta:
         verbose_name = _("Gym Admin Profile")
         verbose_name_plural = _("Gym Admin Profiles")
@@ -417,8 +431,8 @@ class GymAdminProfile(TenantBaseModel, TimeStampedMixin):
         return f"Admin: {self.user.get_full_name()} - {self.gym.name}"
 
     def has_perm(self, perm):
-        """Check if admin has specific permission."""
-        return self.permissions.get(perm, False)
+        """Permission key is allowed unless explicitly disabled."""
+        return self.permissions.get(perm, self.DEFAULT_PERMISSIONS.get(perm, True))
 
 
 class CoachProfile(TimeStampedMixin):

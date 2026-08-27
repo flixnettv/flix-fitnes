@@ -161,7 +161,9 @@ export async function fetchBranding(): Promise<GymBrandingApi> {
 
 interface ApiMember {
   id: string; name: string; gymId: string; trainerId: string;
-  membership: Client["membership"]; membershipEnd: string; goals: string[];
+  membership: Client["membership"]; membershipStart?: string; membershipEnd: string;
+  membershipFee?: number; email?: string; phone?: string;
+  goals: string[]; isActive?: boolean;
   weight: number; startWeight: number; targetWeight: number;
   adherence: number; joinedWeeks: number;
 }
@@ -169,6 +171,14 @@ interface ApiTrainer {
   id: string; name: string; gymId: string; employeeId: string; spec: string[];
   certs: string[]; clients: number; maxClients: number; sessionsMonth: number;
   rating: number; hireDate: string; rate: number; active: boolean;
+}
+
+export interface GymStats {
+  totalMembers: number; activeMembers: number;
+  activeSubscriptions: number; expiredMembers: number;
+  totalTrainers: number; activeTrainers: number;
+  newThisMonth: number; expiringThisMonth: number;
+  totalRevenue: number;
 }
 
 /** Overwrite the design's mock arrays in-place with live backend data. */
@@ -197,6 +207,13 @@ export async function syncRealData(): Promise<void> {
         streak: 0,
         joinedWeeks: m.joinedWeeks ?? 0,
       } satisfies Client);
+      const live = CLIENTS[CLIENTS.length - 1] as Client & {
+        membershipStart?: string; membershipFee?: number; email?: string; phone?: string;
+      };
+      live.membershipStart = (m.membershipStart || "").slice(0, 10);
+      live.membershipFee = m.membershipFee ?? 0;
+      live.email = m.email || "";
+      live.phone = m.phone || "";
     }
 
     TRAINERS.length = 0;
@@ -296,11 +313,81 @@ export async function syncGyms(): Promise<void> {
 
 /* ---------- create member ---------- */
 
-export async function createMember(payload: {
+export interface CreateMemberPayload {
   email: string; password?: string; name: string; phone?: string;
-  membership_type?: string; goals?: string[]; trainer_id?: string;
-}): Promise<{ id: string; name: string; password_set: boolean }> {
+  membership_type?: string; membership_fee?: number;
+  membership_start?: string; membership_end?: string;
+  goals?: string[]; trainer_id?: string;
+}
+
+export async function createMember(payload: CreateMemberPayload): Promise<{ id: string; name: string; password_set: boolean }> {
   return api("/gyms/members/create/", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export interface UpdateMemberPayload {
+  trainer_id?: string | null; membership_type?: string;
+  membership_start?: string; membership_end?: string;
+  membership_fee?: number | null; goals?: string[]; is_active?: boolean;
+}
+
+/** Update membership of an existing member (admins: all; trainers: own clients only). */
+export async function updateMember(
+  memberId: string, patch: UpdateMemberPayload,
+): Promise<{ ok: boolean; [k: string]: unknown }> {
+  return api(`/gyms/members/${memberId}/`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+/** Archive (soft-deactivate) a member. */
+export async function archiveMember(memberId: string): Promise<{ ok: boolean }> {
+  return api(`/gyms/members/${memberId}/`, { method: "DELETE" });
+}
+
+/* ---------- gym settings (admin) ---------- */
+
+export interface GymSettings {
+  name: string; address: string; city: string;
+  contact_email: string; contact_phone: string;
+  instagram_url: string; twitter_url: string; website_url: string;
+  currency: string;
+  opening_hours: Record<string, unknown>;
+  notification_config: Record<string, unknown>;
+}
+
+export async function fetchMySettings(): Promise<GymSettings> {
+  return api<GymSettings>("/gyms/my-settings/");
+}
+
+export async function updateMySettings(patch: Partial<GymSettings>): Promise<{ ok: boolean }> {
+  return api("/gyms/my-settings/update/", { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export async function fetchGymStats(): Promise<GymStats> {
+  return api<GymStats>("/gyms/stats/");
+}
+
+/* ---------- oversee gym admins (super admin) ---------- */
+
+export interface GymAdminProfile {
+  id: string; user_id: string; email: string; name: string;
+  is_primary: boolean; permissions: Record<string, boolean>;
+}
+
+export async function fetchGymAdmins(gymId: string): Promise<GymAdminProfile[]> {
+  return api<GymAdminProfile[]>(`/gyms/${gymId}/admins/`);
+}
+
+export async function addGymAdmin(gymId: string, email: string, password?: string): Promise<{ ok: boolean; user_id: string }> {
+  return api(`/gyms/${gymId}/admins/add/`, { method: "POST", body: JSON.stringify({ email, password: password || "" }) });
+}
+
+export async function removeGymAdmin(gymId: string, profileId: string): Promise<{ ok: boolean }> {
+  return api(`/gyms/${gymId}/admins/${profileId}/remove/`, { method: "POST" });
+}
+
+export async function updateGymAdminPermissions(
+  gymId: string, profileId: string, permissions: Record<string, boolean>,
+): Promise<{ ok: boolean; permissions: Record<string, boolean> }> {
+  return api(`/gyms/${gymId}/admins/${profileId}/permissions/`, { method: "PATCH", body: JSON.stringify({ permissions }) });
 }
 
 /* ---------- plans ---------- */
@@ -456,7 +543,7 @@ export async function updateGym(gymId: string, payload: Record<string, unknown>)
 }
 
 export async function createTrainerStandalone(payload: Record<string, unknown>) {
-  return api("/gyms/create-trainer/", { method: "POST", body: JSON.stringify(payload) });
+  return api("/directory/create-trainer/", { method: "POST", body: JSON.stringify(payload) });
 }
 
 export interface MyAppearance {
@@ -516,6 +603,16 @@ export async function fetchTrainerAdmins(): Promise<TrainerAdmin[]> {
   return r.results ?? (r as unknown as TrainerAdmin[]);
 }
 
+export interface CreateTrainerAdminPayload {
+  email: string; password?: string; first_name?: string; last_name?: string;
+  phone?: string; employee_id?: string; specialization?: string[];
+  max_clients?: number; hourly_rate?: number; hire_date?: string; gym?: string;
+}
+
+export async function createTrainerAdmin(payload: CreateTrainerAdminPayload): Promise<{ id: string }> {
+  return api("/gyms/trainers-admin/", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export async function updateTrainerAdmin(id: string, patch: Record<string, unknown>) {
   return api(`/gyms/trainers-admin/${id}/`, { method: "PATCH", body: JSON.stringify(patch) });
 }
@@ -526,8 +623,4 @@ export async function resetTrainerPassword(id: string, password: string) {
 
 export async function deleteTrainerAdmin(id: string) {
   return api(`/gyms/trainers-admin/${id}/`, { method: "DELETE" });
-}
-
-export async function fetchGymStats() {
-  return api<Record<string, number>>("/gyms/stats/");
 }

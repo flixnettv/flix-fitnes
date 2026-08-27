@@ -62,9 +62,9 @@ class IsGymAdminOrTrainer(BasePermission):
             if hasattr(obj, 'gym'):
                 return u.gym_admin_profile.gym == obj.gym
         if hasattr(u, "trainer_profile"):
-            if hasattr(obj, 'trainer'):
+            if hasattr(obj, "trainer"):
                 return u.trainer_profile == obj.trainer
-            if hasattr(obj, 'trainer'):
+            if hasattr(obj, "trainer_profile"):
                 return u.trainer_profile == obj.trainer_profile
         return False
 
@@ -297,4 +297,63 @@ class CanManageGymSchedule(BasePermission):
         if hasattr(request.user, "gym_admin_profile"):
             if hasattr(obj, 'gym'):
                 return request.user.gym_admin_profile.gym == obj.gym
+        return False
+
+
+class IsGymStaff(BasePermission):
+    """Gym staff only: gym admins, active trainers, or platform super admins."""
+    message = "Gym staff access required."
+
+    def has_permission(self, request, view):
+        u = request.user
+        if not u or not u.is_authenticated:
+            return False
+        return bool(
+            u.is_superuser
+            or hasattr(u, "gym_admin_profile")
+            or (hasattr(u, "trainer_profile") and u.trainer_profile.is_active)
+        )
+
+
+class IsGymAdminOrSuperAdmin(BasePermission):
+    """Gym admins of the object's gym, or platform super admins."""
+    message = "Gym admin access required."
+
+    def has_permission(self, request, view):
+        u = request.user
+        return bool(u and u.is_authenticated and (u.is_superuser or hasattr(u, "gym_admin_profile")))
+
+    def has_object_permission(self, request, view, obj):
+        u = request.user
+        if u.is_superuser:
+            return True
+        if hasattr(u, "gym_admin_profile"):
+            g = getattr(obj, "gym", None)
+            if g is None and getattr(obj, "client_profile", None) is not None:
+                g = obj.client_profile.gym
+            if g is None and getattr(obj, "trainer_profile", None) is not None:
+                g = obj.trainer_profile.gym
+            return bool(g and g == u.gym_admin_profile.gym)
+        return False
+
+
+class HasGymPerm(BasePermission):
+    """Gym-admin operation gated by GymAdminProfile.permissions flag.
+
+    Use via the factory below: permission_classes = [HasGymPerm("manage_trainers")].
+    Super admins always pass; unset flags stay allowed (explicit deny only).
+    """
+
+    def __init__(self, perm):
+        self.perm = perm
+        self.message = f"هذه الصلاحية غير ممنوحة لمدير الصالة ({perm})."
+
+    def has_permission(self, request, view):
+        u = request.user
+        if not u or not u.is_authenticated:
+            return False
+        if u.is_superuser:
+            return True
+        if hasattr(u, "gym_admin_profile"):
+            return u.gym_admin_profile.has_perm(self.perm)
         return False
