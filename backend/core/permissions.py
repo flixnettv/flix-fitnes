@@ -37,8 +37,6 @@ class IsGymAdmin(BasePermission):
             return False
         if hasattr(obj, 'gym'):
             return request.user.gym_admin_profile.gym == obj.gym
-        if hasattr(obj, 'gym'):
-            return request.user.gym_admin_profile.gym == obj.gym
         return False
 
 
@@ -61,8 +59,6 @@ class IsGymAdminOrTrainer(BasePermission):
         if u.is_superuser:
             return True
         if hasattr(u, "gym_admin_profile"):
-            if hasattr(obj, 'gym'):
-                return u.gym_admin_profile.gym == obj.gym
             if hasattr(obj, 'gym'):
                 return u.gym_admin_profile.gym == obj.gym
         if hasattr(u, "trainer_profile"):
@@ -107,33 +103,11 @@ class IsClient(BasePermission):
         return False
 
 
-class IsOwnerOrGymStaff(BasePermission):
-    """Allow access to object owner or gym staff (admin/trainer)."""
-    message = "Owner or gym staff access required."
-
-    def has_object_permission(self, request, view, obj):
-        if not hasattr(request.user, 'client_profile') and not hasattr(request.user, 'trainer_profile') and not hasattr(request.user, 'gym_admin_profile'):
-            return False
-        if hasattr(obj, 'user') and obj.user == request.user:
-            return True
-        if hasattr(obj, 'user') and obj.user == request.user:
-            return True
-        if hasattr(obj, 'client_profile') and obj.client_profile.gym:
-            gym = obj.client_profile.gym
-            if hasattr(request.user, 'gym_admin_profile'):
-                return request.user.gym_admin_profile.gym == gym
-            if hasattr(request.user, 'trainer_profile') and request.user.trainer_profile.is_active:
-                return request.user.trainer_profile.gym == obj.client_profile.gym
-        return False
-
-
 class IsOwnerOrReadOnly(BasePermission):
     """Allow read access to all, write only to owner."""
     
     def has_object_permission(self, request, view, obj):
         if request.method in ('GET', 'HEAD', 'OPTIONS'):
-            return True
-        if hasattr(obj, 'user') and obj.user == request.user:
             return True
         if hasattr(obj, 'user') and obj.user == request.user:
             return True
@@ -180,8 +154,6 @@ class IsOwnerOrGymStaff(BasePermission):
                 return obj.trainer == request.user.trainer_profile
             if hasattr(obj, 'trainer_profile'):
                 return obj.trainer_profile == request.user.trainer_profile
-        if hasattr(obj, 'user') and obj.user == request.user:
-            return True
         if hasattr(obj, 'user') and obj.user == request.user:
             return True
         if hasattr(obj, 'client_profile') and obj.client_profile.gym:
@@ -297,8 +269,6 @@ class CanManageGymSettings(BasePermission):
         if hasattr(request.user, "gym_admin_profile"):
             if hasattr(obj, 'gym'):
                 return obj.gym == request.user.gym_admin_profile.gym
-            if hasattr(obj, 'gym'):
-                return obj.gym == request.user.gym_admin_profile.gym
         return False
 
 
@@ -327,6 +297,4 @@ class CanManageGymSchedule(BasePermission):
         if hasattr(request.user, "gym_admin_profile"):
             if hasattr(obj, 'gym'):
                 return request.user.gym_admin_profile.gym == obj.gym
-            if hasattr(obj, 'gym'):
-                return obj.gym == request.user.gym_admin_profile.gym
         return False

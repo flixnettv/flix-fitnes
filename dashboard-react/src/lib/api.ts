@@ -25,6 +25,7 @@ export interface AuthUser {
   firstName: string;
   lastName: string;
   role: BackendRole;
+  isSuperuser: boolean;
 }
 
 interface Tokens { access: string; refresh: string }
@@ -91,8 +92,29 @@ export async function apiLogin(email: string, password: string): Promise<AuthUse
     firstName: u.first_name || "",
     lastName: u.last_name || "",
     role: (u.role || "client") as BackendRole,
+    isSuperuser: u.is_superuser === true,
   };
   saveSession({ access: j.access, refresh: j.refresh }, user);
+  return user;
+}
+
+/** Re-fetch the current user profile with a valid token (refreshes role/perms). */
+export async function fetchMe(): Promise<AuthUser> {
+  const u = await api<{
+    id: string | number; username: string; email: string;
+    first_name?: string; last_name?: string; role?: string; is_superuser?: boolean;
+  }>("/auth/me/");
+  const user: AuthUser = {
+    id: String(u.id),
+    username: u.username,
+    email: u.email,
+    firstName: u.first_name || "",
+    lastName: u.last_name || "",
+    role: (u.role || "client") as BackendRole,
+    isSuperuser: u.is_superuser === true,
+  };
+  const t = getTokens();
+  if (t) saveSession(t, user);
   return user;
 }
 
@@ -175,15 +197,16 @@ export async function syncRealData(): Promise<void> {
   }
 }
 
-/** Restore session on app load; returns user if tokens valid. */
+/** Restore session on app load; refreshes user/role from the server. */
 export async function restoreSession(): Promise<AuthUser | null> {
   const stored = getStoredUser();
   if (!stored || !getTokens()) return null;
-  // Validate token by hitting a light endpoint
+  // Validate token by hitting a light endpoint, then refresh user (fresh role).
   try {
     await api("/gyms/branding/");
+    const fresh = await fetchMe();
     await syncRealData();
-    return stored;
+    return fresh;
   } catch {
     clearSession();
     return null;

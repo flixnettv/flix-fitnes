@@ -27,7 +27,29 @@
 | قاعدة البيانات | خدمات Dokku: `fitpro-db` (Postgres) + `fitpro-cache` (Redis) | عبر `DATABASE_URL` و`REDIS_URL` المُحقنة من `dokku postgres:link` / `redis:link` |
 | Celery | — | عملية `worker` في `Procfile` (من نفس الـ image) |
 
-## 🚫 أخطاء لا تتكرر (مستفادة بالدم)
+## 🧭 المنطق والتوجيه (الأدوار) — ثمرة الدراسة العميقة
+
+**الهدف:** النظام متعدد الأدوار داخل أصل واحد `fitpro.hftv.qzz.io`:
+- `super_admin` — منصة: إنشاء الصالات/المدربين المستقلين، فصل/تفعيل، حسابات وإعادة بواصير
+- `gym_admin` — صالة: مدربوها وأعضاؤها ومظهرها وأجهزتها (`GymAdminProfile`)
+- `trainer` — مدرب: عملاؤه وخططه وتغذيته وتطوره (`TrainerProfile` نشط)
+- `client` — متدرب/عضو: تمارينه وتغذيته وأجهزته وتسجيل دخوله (`ClientProfile`)
+
+**تدفق التوجيه وقت الدخول:**
+1. `POST /api/v1/auth/login/` ← `MeSerializer` يعيد `role` حرفياً + `is_superuser` + `gym`
+2. `dashboard-react/src/store.tsx` `activateUser`: `setRole(ROLE_MAP[u.role] ?? (u.isSuperuser ? "super" : "client"))`
+3. `ROLE_MAP`: `super_admin→super` · `gym_admin→gymAdmin` · `trainer→trainer` · `client→client`
+4. `Shell` يختار الواجهة: `SuperAdmin` / `GymAdmin` / `Trainer` / `ClientApp`
+
+**القاعدة الذهبية (مستفادة):** الصلاحيات الفعلية تُمنح من **`is_superuser` + وجود الـ profiles** وليس من حقل `role` النصي — لكن الواجهة توجّه بـ `role` الحرفي. لذلك **يجب** أن يطابق `role` الـ profiles تماماً وإلا تتباعد الواجهة عن الصلاحيات.
+
+**قرارات مُنفَّذة لإصلاح الانحراف:**
+- Data migration `acct/0003_reconcile_roles` تُطبع الدور خارج القيم الصالحة: سوبر أدمن ⇒ `super_admin`، ثم بالـ profile.
+- أمر إدارة `python manage.py reconcile_roles` (وإن شئت `--check`) لإعادة المطابقة عند الطلب.
+- الواجهة: Fallback ذكي `?? (isSuperuser ? "super" : "client")` + **منعش الدور من `/auth/me/`** عند استعادة الجلسة (لا ثقة بالدور المخزن محلياً).
+- `dokku/web.sh` + `entrypoint.sh`: إنشاء الحساب بدور `super_admin` (لم تعد `owner`).
+- مدقّة الإنشاء انتهت: كل نقاط الإنشاء (`members_create`، `gym_member_create`، `create_trainer_account`، `TrainerAdminViewSet`، `GymViewSet.perform_create`) تضبط `user.role` بما يوافق الـ profile — لا فجوة.
+- تنظيف `core/permissions.py`: حذف `IsOwnerOrGymStaff` المكرر الأول الناقص + إزالة شروط `hasattr` المتطابقة (محافظ على السلوك).
 
 1. **لا تخلط** مسارات محلية وبعيدة في نفس سكربت التعديل — قسّمه: سكربت محلي + سكربت يُنقل عبر scp (يقلص الوضوح بعد Dokku لكنه قاعدة ذهبية حتى الآن)
 2. **heredoc عبر SSH يفسد الملفات** (يحذف علامات الاقتباس) — النقل دائماً: write محلي ← scp ← python3

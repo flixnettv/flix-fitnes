@@ -216,7 +216,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // data must be fully synced BEFORE the dashboards render
     await postLoginSync();
     await applyBrandingFromApi();
-    setRole(ROLE_MAP[u.role] ?? "client");
+    // Unknown backend role must never silently drop a superuser into the client view.
+    setRole(ROLE_MAP[u.role] ?? (u.isSuperuser ? "super" : "client"));
     dismissFirstVisit();
   }, [applyBrandingFromApi, dismissFirstVisit]);
 

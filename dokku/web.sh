@@ -15,11 +15,17 @@ import os
 from acct.models import User
 email = os.getenv('OWNER_EMAIL', 'flixnettv@gmail.com')
 password = os.getenv('OWNER_PASSWORD', '#Flix1571980')
-if not User.objects.filter(email=email).exists():
-    User.objects.create_superuser('flixnettv', email, password, role='owner', first_name='Flix', last_name='Admin')
+user = User.objects.filter(email=email).first()
+if user is None:
+    User.objects.create_superuser('flixnettv', email, password, role='super_admin', first_name='Flix', last_name='Admin')
     print('Platform owner created:', email)
 else:
-    print('Platform owner exists:', email)
+    if not user.is_superuser:
+        user.is_superuser = True
+    if user.role != 'super_admin':
+        user.role = 'super_admin'
+        user.save(update_fields=['is_superuser', 'role'])
+    print('Platform owner verified:', email)
 " 2>/dev/null || true
 
 echo "==> Starting gunicorn (background) + nginx (foreground)..."
