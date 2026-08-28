@@ -116,8 +116,8 @@ class GymViewSet(viewsets.ModelViewSet):
         profile = GymAdminProfile.objects.filter(id=pid, gym=gym).first()
         if profile is None:
             return Response({"error": "غير موجود"}, status=404)
-        if profile.is_primary and GymAdminProfile.objects.filter(gym=gym).count() == 1:
-            return Response({"error": "لا يمكن إزالة المدير الوحيد — عيّن مديراً آخر أولاً"}, status=400)
+        if GymAdminProfile.objects.filter(gym=gym).count() == 1:
+            return Response({"error": "لا يمكن إزالة المدير الوحيد للصالة — أضف مديراً آخر أولاً"}, status=400)
         user = profile.user
         if hasattr(user, "client_profile") or hasattr(user, "trainer_profile"):
             user.role = "client"
@@ -125,6 +125,14 @@ class GymViewSet(viewsets.ModelViewSet):
             # downgrade to a plain user to avoid locking the gym
             user.role = "client"
         profile.delete()
+        if profile.is_primary:
+            # promote another manager so the gym always keeps a primary
+            nxt = GymAdminProfile.objects.filter(gym=gym).exclude(id=profile.id).order_by("id").first()
+            if nxt:
+                nxt.is_primary = True
+                nxt.save(update_fields=["is_primary"])
+                nxt.user.role = "gym_admin"
+                nxt.user.save(update_fields=["role"])
         if user.role == "gym_admin":
             user.role = "client"
             user.save(update_fields=["role"])

@@ -169,7 +169,7 @@ function AdminsModal({ gym, onClose }: { gym: AdminGym; onClose: () => void }) {
       setConfirmRem(null);
       await load();
       toast("أُزيل المدير من الصالة", "ember");
-    } catch { toast("تعذّر الإزالة — المدير الرئيسي الوحيد لا يمكن إزالته", "ember"); }
+    } catch { toast("تعذّرت الإزالة — لا يمكن إزالة المدير الوحيد للصالة", "ember"); }
     finally { setBusy(false); }
   };
 
@@ -202,7 +202,7 @@ function AdminsModal({ gym, onClose }: { gym: AdminGym; onClose: () => void }) {
                     <div className="text-[10px] text-moss2 truncate" dir="ltr">{p.email}</div>
                   </div>
                   <button
-                    disabled={p.is_primary || busy}
+                    disabled={busy || list.length === 1}
                     onClick={() => setConfirmRem(p)}
                     className="btn-ghost rounded-lg px-2.5 py-1.5 text-[10px] font-bold text-blush hover:!border-blush/40 disabled:opacity-40"
                   >إزالة</button>
