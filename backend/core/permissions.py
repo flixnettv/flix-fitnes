@@ -337,23 +337,26 @@ class IsGymAdminOrSuperAdmin(BasePermission):
         return False
 
 
-class HasGymPerm(BasePermission):
-    """Gym-admin operation gated by GymAdminProfile.permissions flag.
+def HasGymPerm(perm):
+    """Factory: gym-admin operation gated by GymAdminProfile.permissions flag.
 
-    Use via the factory below: permission_classes = [HasGymPerm("manage_trainers")].
-    Super admins always pass; unset flags stay allowed (explicit deny only).
+    Use as: permission_classes = [HasGymPerm("manage_trainers")].
+    DRF instantiates each entry, so this returns a parameterless permission
+    class bound to `perm`. Super admins always pass; unset flags stay allowed
+    (explicit deny only).
     """
 
-    def __init__(self, perm):
-        self.perm = perm
-        self.message = f"هذه الصلاحية غير ممنوحة لمدير الصالة ({perm})."
+    class _HasGymPerm(BasePermission):
+        message = f"هذه الصلاحية غير ممنوحة لمدير الصالة ({perm})."
 
-    def has_permission(self, request, view):
-        u = request.user
-        if not u or not u.is_authenticated:
+        def has_permission(self, request, view):
+            u = request.user
+            if not u or not u.is_authenticated:
+                return False
+            if u.is_superuser:
+                return True
+            if hasattr(u, "gym_admin_profile"):
+                return u.gym_admin_profile.has_perm(perm)
             return False
-        if u.is_superuser:
-            return True
-        if hasattr(u, "gym_admin_profile"):
-            return u.gym_admin_profile.has_perm(self.perm)
-        return False
+
+    return _HasGymPerm
